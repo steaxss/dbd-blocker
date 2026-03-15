@@ -1,37 +1,19 @@
-import { execFile } from 'child_process'
+import { execFile, spawn } from 'child_process'
 import { promisify } from 'util'
-import { getExePath, validateExePath } from './settings'
+import { join } from 'path'
+import {
+  isBlocked,
+  getBlockedMap,
+  wfpBlock,
+  wfpUnblock,
+  wfpUnblockMany,
+} from './wfp'
+
+export type { LogEmitter } from './wfp'
 
 const execFileAsync = promisify(execFile)
 
-export type LogEmitter = (level: string, message: string) => void
-
-const REGION_CITIES: Record<string, string> = {
-  'us-east-1':      'Virginia',
-  'us-east-2':      'Ohio',
-  'us-west-1':      'California',
-  'us-west-2':      'Oregon',
-  'ca-central-1':   'Montreal',
-  'eu-central-1':   'Frankfurt',
-  'eu-west-1':      'Dublin',
-  'eu-west-2':      'London',
-  'ap-south-1':     'Mumbai',
-  'ap-east-1':      'HongKong',
-  'ap-northeast-1': 'Tokyo',
-  'ap-northeast-2': 'Seoul',
-  'ap-southeast-1': 'Singapore',
-  'ap-southeast-2': 'Sydney',
-  'sa-east-1':      'SaoPaulo',
-}
-
-export const ruleName = (regionId: string): string => {
-  const city = REGION_CITIES[regionId]
-  return city ? `Block_DBD_${regionId}_${city}` : `Block_DBD_${regionId}`
-}
-
-// ---------------------------------------------------------------------------
-// PowerShell helper (still needed for ipc.ts / firewall queries)
-// ---------------------------------------------------------------------------
+// ── PowerShell helper (still needed for UDP monitor in ipc.ts) ────────────────
 
 export async function ps(command: string): Promise<{ ok: boolean; stdout: string; stderr: string }> {
   try {
@@ -51,184 +33,190 @@ export async function ps(command: string): Promise<{ ok: boolean; stdout: string
   }
 }
 
-// ---------------------------------------------------------------------------
-// Registry path where Windows Firewall stores its rules
-// Bypasses the broken Windows Defender Firewall management API (WMI/COM/netsh)
-// ---------------------------------------------------------------------------
-
-const REG_KEY = 'HKLM\\SYSTEM\\CurrentControlSet\\Services\\SharedAccess\\Parameters\\FirewallPolicy\\FirewallRules'
-
-// ---------------------------------------------------------------------------
-// Rule operations — direct registry read/write via reg.exe + PowerShell
-// ---------------------------------------------------------------------------
+// ── WFP-backed firewall operations ────────────────────────────────────────────
 
 export async function ruleExists(regionId: string): Promise<boolean> {
-  const name = ruleName(regionId)
-  try {
-    const { stdout } = await execFileAsync(
-      'reg', ['query', REG_KEY, '/v', name],
-      { timeout: 10_000 }
-    )
-    return stdout.includes(name)
-  } catch {
-    return false
-  }
+  return isBlocked(regionId)
 }
-
-async function removeRule(regionId: string): Promise<void> {
-  const name = ruleName(regionId)
-  await execFileAsync(
-    'reg', ['delete', REG_KEY, '/v', name, '/f'],
-    { timeout: 10_000 }
-  ).catch(() => { /* no rule to delete is not an error */ })
-}
-
-// ---------------------------------------------------------------------------
-// Block a region — write directly to Windows Firewall registry
-// ---------------------------------------------------------------------------
 
 export async function blockRegion(
   regionId: string,
   cidrs: string[],
   log: LogEmitter
 ): Promise<{ ok: boolean; error?: string }> {
-  const name = ruleName(regionId)
-
-  // Step 1 — Preventive cleanup
-  log('step', `[${regionId}] [1/3] Preventive cleanup...`)
-  if (await ruleExists(regionId)) {
-    await removeRule(regionId)
-    if (await ruleExists(regionId)) {
-      const err = 'Cannot remove residual rule'
-      log('error', `[${regionId}] [1/3] ${err}`)
-      return { ok: false, error: err }
-    }
-    log('step', `[${regionId}] [1/3] Residual rule removed`)
-  } else {
-    log('step', `[${regionId}] [1/3] OK (no residual rule)`)
-  }
-
-  // Step 2 — Write rule directly to Windows Firewall registry
-  //   Bypasses the broken WDF management API (WMI/COM/netsh all return 0x2)
-  //   MpsSvc monitors the FirewallRules registry key and enforces changes automatically
-  log('step', `[${regionId}] [2/3] Creating firewall rule...`)
-
-  const exePath = await getExePath()
-  const exeCheck = validateExePath(exePath)
-  if (!exeCheck.ok) {
-    log('error', `[${regionId}] [2/3] FAILED — DBD exe not found: ${exeCheck.error}`)
-    log('warning', `[${regionId}] Configure the correct DBD path in Settings (⚙)`)
-    return { ok: false, error: 'DBD executable not found — open Settings and set the correct path' }
-  }
-
-  // Build Windows Firewall registry rule string (v2.33 format)
-  // Per MS-GPFAS spec: each RA4= entry holds ONE value (range or subnet).
-  // Multiple CIDRs = multiple RA4= tokens, NOT comma-separated in one token.
-  // /32 hosts are not valid as subnet prefix (spec requires < 32) — use range format instead.
-  const raEntries = cidrs.map(cidr => {
-    if (cidr.endsWith('/32')) {
-      const ip = cidr.slice(0, -3)
-      return `RA4=${ip}-${ip}`
-    }
-    return `RA4=${cidr}`
-  }).join('|')
-
-  const ruleValue =
-    `v2.33|Action=Block|Active=TRUE|Dir=Out|` +
-    `${raEntries}|` +
-    `App=${exePath}|` +
-    `Name=${name}|Desc=|EmbedCtxt=${name}|`
-
-  log('step', `[${regionId}] [2/3] Writing ${cidrs.length} CIDRs to registry...`)
-
-  // Use reg.exe add directly — bypasses PS escaping and Set-ItemProperty subtleties
-  let createOk = false
-  let createErr = ''
-  try {
-    await execFileAsync(
-      'reg', ['add', REG_KEY, '/v', name, '/t', 'REG_SZ', '/d', ruleValue, '/f'],
-      { timeout: 30_000 }
-    )
-    createOk = true
-  } catch (err: unknown) {
-    const e = err as { stdout?: string; stderr?: string; message?: string }
-    const out = ((e.stdout ?? '') + (e.stderr ?? '')).trim()
-    createErr = out || String(err)
-  }
-
-  if (!createOk) {
-    await removeRule(regionId)
-    log('error', `[${regionId}] [2/3] FAILED — ${createErr}`)
-    return { ok: false, error: createErr || 'Registry write failed' }
-  }
-  log('step', `[${regionId}] [2/3] OK`)
-
-  // Step 3 — Verify registry entry exists
-  log('step', `[${regionId}] [3/3] Verifying...`)
-  if (!(await ruleExists(regionId))) {
-    await removeRule(regionId)
-    const err = 'Rule not found in registry after creation'
-    log('error', `[${regionId}] [3/3] FAILED — ${err}`)
-    return { ok: false, error: err }
-  }
-  log('success', `[${regionId}] [3/3] OK — rule active`)
-  log('success', `[${regionId}] BLOCKED (${cidrs.length} CIDRs)`)
-
-  return { ok: true }
+  return wfpBlock(regionId, cidrs, log)
 }
-
-// ---------------------------------------------------------------------------
-// Unblock a region
-// ---------------------------------------------------------------------------
 
 export async function unblockRegion(
   regionId: string,
   log: LogEmitter
 ): Promise<{ ok: boolean; error?: string }> {
-  log('step', `[${regionId}] [1/2] Removing rule...`)
-
-  for (let attempt = 0; attempt < 3; attempt++) {
-    await removeRule(regionId)
-    if (!(await ruleExists(regionId))) break
-    if (attempt < 2) await new Promise((r) => setTimeout(r, 1000))
-  }
-
-  if (await ruleExists(regionId)) {
-    const err = `Failed after 3 attempts — remove manually: ${ruleName(regionId)}`
-    log('error', `[${regionId}] [1/2] FAILED — ${err}`)
-    return { ok: false, error: err }
-  }
-
-  log('step', `[${regionId}] [1/2] OK`)
-  log('step', `[${regionId}] [2/2] Verification — no active rule`)
-  log('success', `[${regionId}] UNBLOCKED`)
-
-  return { ok: true }
+  return wfpUnblock(regionId, log)
 }
-
-// ---------------------------------------------------------------------------
-// Unblock all (called on app quit)
-// ---------------------------------------------------------------------------
 
 export async function unblockAll(regionIds: string[], log: LogEmitter): Promise<void> {
-  log('info', 'Cleanup — removing all rules...')
-  for (const id of regionIds) {
-    if (await ruleExists(id)) {
-      await removeRule(id)
-      log('step', `[${id}] removed`)
-    }
-  }
-  log('info', 'Cleanup complete')
+  return wfpUnblockMany(regionIds, log)
 }
 
-// ---------------------------------------------------------------------------
-// Read current firewall state (on startup)
-// ---------------------------------------------------------------------------
-
 export async function getBlockedRegions(regionIds: string[]): Promise<Record<string, boolean>> {
-  const status: Record<string, boolean> = {}
-  for (const id of regionIds) {
-    status[id] = await ruleExists(id)
+  const all = await getBlockedMap()
+  const result: Record<string, boolean> = {}
+  for (const id of regionIds) result[id] = all[id] ?? false
+  return result
+}
+
+// ── Firewall health check — runs wfp-prereq.ps1 ───────────────────────────────
+
+export function checkFirewallHealth(
+  log: LogEmitter,
+  scriptPath: string
+): Promise<{ healthy: boolean; issue?: string; cause?: 'wfp-broken' | 'third-party' }> {
+  return new Promise((resolve) => {
+    log('step', '[Health] Running WFP direct API test...')
+
+    const sysRoot = process.env.SystemRoot ?? 'C:\\Windows'
+    const ps64 = `${sysRoot}\\SysNative\\WindowsPowerShell\\v1.0\\powershell.exe`
+    const psExe = require('fs').existsSync(ps64) ? ps64 : 'powershell'
+
+    let resultLine: string | null = null
+
+    const child = spawn(psExe, [
+      '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', scriptPath
+    ], { windowsHide: true })
+
+    const parseLine = (line: string) => {
+      const t = line.trim()
+      if (!t) return
+      const level =
+        t.startsWith('FAIL') || t.includes('RESULT: FAIL') ? 'error' :
+        t.includes('RESULT: PASS') || t.startsWith('OK') ? 'success' :
+        t.startsWith('[') ? 'step' :
+        'info'
+      log(level, '[Health] ' + t)
+      if (t.startsWith('RESULT:')) resultLine = t
+    }
+
+    child.stdout?.on('data', (d: Buffer) => d.toString().split('\n').forEach(parseLine))
+    child.stderr?.on('data', (d: Buffer) => d.toString().split('\n').forEach(l => {
+      if (l.trim()) log('error', '[Health] ' + l.trim())
+    }))
+
+    child.on('close', (code) => {
+      if (resultLine?.includes('RESULT: PASS')) {
+        log('success', '[Health] WFP direct API is functional')
+        resolve({ healthy: true })
+      } else if (resultLine?.includes('RESULT: FAIL')) {
+        log('warning', '[Health] WFP API unavailable or broken')
+        resolve({
+          healthy: false,
+          cause: 'wfp-broken',
+          issue: 'WFP direct API test failed — region blocking may not work correctly.'
+        })
+      } else {
+        log('error', `[Health] Script failed (exit ${code})`)
+        resolve({
+          healthy: false,
+          cause: 'wfp-broken',
+          issue: 'WFP prereq script failed — check that the app is running as Administrator.'
+        })
+      }
+    })
+  })
+}
+
+// ── Firewall repair (unchanged) ───────────────────────────────────────────────
+
+export interface RepairStepUpdate {
+  id: string
+  status: 'running' | 'done' | 'error' | 'warning'
+  detail?: string
+}
+
+export interface RepairResult {
+  ok: boolean
+  backupPath?: string
+  needsReboot: boolean
+  error?: string
+}
+
+function runProcess(cmd: string, args: string[]): Promise<number> {
+  return new Promise((resolve) => {
+    const proc = spawn(cmd, args, { windowsHide: true, shell: false })
+    proc.on('close', (code) => resolve(code ?? 0))
+    proc.on('error', () => resolve(1))
+  })
+}
+
+export async function repairFirewall(
+  log: LogEmitter,
+  onStep: (update: RepairStepUpdate) => void,
+  userData: string
+): Promise<RepairResult> {
+  const backupPath = join(userData, `firewall_backup_${Date.now()}.reg`)
+  let needsReboot = false
+
+  onStep({ id: 'backup', status: 'running' })
+  log('step', '[Repair 1/5] Backing up current firewall rules...')
+  try {
+    await execFileAsync('reg', [
+      'export',
+      'HKLM\\SYSTEM\\CurrentControlSet\\Services\\SharedAccess\\Parameters\\FirewallPolicy\\FirewallRules',
+      backupPath, '/y'
+    ], { timeout: 30_000 })
+    onStep({ id: 'backup', status: 'done', detail: backupPath })
+    log('success', `[Repair 1/5] Backup saved: ${backupPath}`)
+  } catch (err) {
+    onStep({ id: 'backup', status: 'error', detail: String(err) })
+    log('error', `[Repair 1/5] Backup failed: ${err}`)
+    return { ok: false, needsReboot: false, error: 'Backup failed — aborting to avoid data loss' }
   }
-  return status
+
+  onStep({ id: 'sfc', status: 'running' })
+  log('step', '[Repair 2/5] Running sfc /scannow — this may take 15-30 minutes...')
+  const sfcCode = await runProcess('sfc', ['/scannow'])
+  needsReboot = true
+  if (sfcCode === 0 || sfcCode === 1) {
+    onStep({ id: 'sfc', status: 'done', detail: sfcCode === 1 ? 'Corrupted files repaired' : 'No integrity violations found' })
+    log('success', `[Repair 2/5] sfc completed (exit ${sfcCode})`)
+  } else {
+    onStep({ id: 'sfc', status: 'warning', detail: `Exit code ${sfcCode} — some files could not be repaired` })
+    log('warning', `[Repair 2/5] sfc exited with code ${sfcCode}`)
+  }
+
+  onStep({ id: 'dism', status: 'running' })
+  log('step', '[Repair 3/5] Running DISM /RestoreHealth — this may take 15-30 minutes...')
+  const dismCode = await runProcess('DISM', ['/Online', '/Cleanup-Image', '/RestoreHealth'])
+  if (dismCode === 0) {
+    onStep({ id: 'dism', status: 'done', detail: 'Component store repaired' })
+    log('success', '[Repair 3/5] DISM completed successfully')
+  } else {
+    onStep({ id: 'dism', status: 'warning', detail: `Exit code ${dismCode}` })
+    log('warning', `[Repair 3/5] DISM exited with code ${dismCode}`)
+  }
+
+  onStep({ id: 'reset', status: 'running' })
+  log('step', '[Repair 4/5] Resetting Windows Firewall policy store...')
+  try {
+    await execFileAsync('netsh', ['advfirewall', 'reset'], { timeout: 30_000 })
+    onStep({ id: 'reset', status: 'done' })
+    log('success', '[Repair 4/5] Firewall reset complete')
+  } catch (err) {
+    onStep({ id: 'reset', status: 'error', detail: String(err) })
+    log('error', `[Repair 4/5] Reset failed: ${err}`)
+    return { ok: false, backupPath, needsReboot, error: 'Firewall reset failed — backup preserved at: ' + backupPath }
+  }
+
+  onStep({ id: 'restore', status: 'running' })
+  log('step', '[Repair 5/5] Restoring firewall rules from backup...')
+  try {
+    await execFileAsync('reg', ['import', backupPath], { timeout: 60_000 })
+    onStep({ id: 'restore', status: 'done' })
+    log('success', '[Repair 5/5] Rules restored successfully')
+  } catch (err) {
+    onStep({ id: 'restore', status: 'error', detail: String(err) })
+    log('error', `[Repair 5/5] Restore failed: ${err}`)
+    return { ok: false, backupPath, needsReboot, error: 'Rules restore failed — backup at: ' + backupPath }
+  }
+
+  return { ok: true, backupPath, needsReboot }
 }

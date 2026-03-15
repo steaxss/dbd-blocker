@@ -60,6 +60,26 @@ export interface ActiveConnectionsResult {
   udpRegions: UdpRegion[]
 }
 
+export interface FirewallHealthResult {
+  healthy: boolean
+  issue?: string
+  cause?: 'wfp-broken' | 'third-party'
+}
+
+export interface RepairStepState {
+  id: string
+  label: string
+  status: 'pending' | 'running' | 'done' | 'error' | 'warning'
+  detail?: string
+}
+
+export interface RepairResult {
+  ok: boolean
+  backupPath?: string
+  needsReboot: boolean
+  error?: string
+}
+
 export interface UpdateInfo {
   available: boolean
   version: string
@@ -114,6 +134,10 @@ export interface ElectronAPI {
   // Active connections
   getActiveConnections: () => Promise<ActiveConnectionsResult>
   resetUdpMonitor:      () => Promise<void>
+  // Firewall health check + repair
+  checkFirewallHealth: () => Promise<FirewallHealthResult>
+  repairFirewall:      () => Promise<RepairResult>
+  onRepairProgress:    (callback: (update: { id: string; status: string; detail?: string }) => void) => () => void
   // Auto-update
   checkForUpdate: () => Promise<UpdateInfo>
   // Server status (deadbyqueue)

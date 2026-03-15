@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { RefreshCw, ShieldOff, AlertTriangle, Settings, X, FolderOpen, Target, LayoutGrid, Globe2, Wifi, Activity, Pin, PinOff, Download } from 'lucide-react'
+import { RefreshCw, ShieldOff, AlertTriangle, Settings, X, FolderOpen, Target, LayoutGrid, Globe2, Wifi, Activity, Pin, PinOff, Download, ShieldAlert } from 'lucide-react'
 import { useAppState } from './hooks/useAppState'
 import { Titlebar } from './components/Header'
 import { RegionGrid } from './components/RegionGrid'
@@ -9,7 +9,7 @@ import { ConsolePanel } from './components/ConsolePanel'
 import { SplashScreen } from './components/SplashScreen'
 import { FlagIcon } from './components/FlagIcon'
 import { REGIONS } from './regions'
-import type { ExeValidationResult } from './types'
+import type { ExeValidationResult, FirewallHealthResult, RepairStepState, RepairResult } from './types'
 
 export default function App() {
   const {
@@ -61,6 +61,60 @@ export default function App() {
       return () => clearTimeout(t)
     }
   }, [initDone])
+
+  // Firewall health check — runs once after splash, non-blocking
+  const [firewallHealth, setFirewallHealth] = useState<FirewallHealthResult | null>(null)
+  const [fwBannerDismissed, setFwBannerDismissed] = useState(false)
+
+  useEffect(() => {
+    if (!initDone) return
+    window.api.checkFirewallHealth().then(setFirewallHealth)
+  }, [initDone])
+
+  // Repair modal state
+  const REPAIR_STEPS: RepairStepState[] = [
+    { id: 'backup',  label: 'Back up current firewall rules',        status: 'pending' },
+    { id: 'sfc',     label: 'sfc /scannow  (Windows File Checker)',  status: 'pending' },
+    { id: 'dism',    label: 'DISM /RestoreHealth',                   status: 'pending' },
+    { id: 'reset',   label: 'Reset Windows Firewall policy store',   status: 'pending' },
+    { id: 'restore', label: 'Restore firewall rules from backup',    status: 'pending' },
+  ]
+  const [showRepairModal, setShowRepairModal]   = useState(false)
+  const [repairRunning, setRepairRunning]       = useState(false)
+  const [repairSteps, setRepairSteps]           = useState<RepairStepState[]>(REPAIR_STEPS)
+  const [repairResult, setRepairResult]         = useState<RepairResult | null>(null)
+  const [repairLogOffset, setRepairLogOffset]   = useState(0)
+
+  useEffect(() => {
+    const unsub = window.api.onRepairProgress(({ id, status, detail }) => {
+      setRepairSteps(prev => prev.map(s =>
+        s.id === id ? { ...s, status: status as RepairStepState['status'], detail } : s
+      ))
+    })
+    return unsub
+  }, [])
+
+  async function startRepair() {
+    setRepairSteps(REPAIR_STEPS)
+    setRepairResult(null)
+    setRepairRunning(true)
+    setRepairLogOffset(logs.length)
+    const result = await window.api.repairFirewall()
+    setRepairResult(result)
+    setRepairRunning(false)
+    if (result.ok) {
+      // Re-run health check to update the banner
+      window.api.checkFirewallHealth().then(setFirewallHealth)
+    }
+  }
+
+  function openRepairModal() {
+    setRepairSteps(REPAIR_STEPS)
+    setRepairResult(null)
+    setRepairRunning(false)
+    setRepairLogOffset(logs.length)
+    setShowRepairModal(true)
+  }
 
   // Exe setup modal
   const [showExeSetupModal, setShowExeSetupModal] = useState(false)
@@ -151,6 +205,81 @@ export default function App() {
 
       {/* Titlebar — Windows controls */}
       <Titlebar />
+
+      {/* Firewall health warning banner */}
+      {firewallHealth && !firewallHealth.healthy && !fwBannerDismissed && (() => {
+        const isThirdParty = firewallHealth.cause === 'third-party'
+        const accent = isThirdParty ? '#FF9800' : '#F44336'
+        const accentRgb = isThirdParty ? '255,152,0' : '244,67,54'
+        return (
+          <div
+            className="shrink-0 relative z-40 px-6 py-3"
+            style={{ background: `rgba(${accentRgb},0.08)`, borderBottom: `1px solid rgba(${accentRgb},0.22)` }}
+          >
+            <div className="flex items-start justify-between gap-4">
+              <div className="flex items-start gap-3 min-w-0">
+                <ShieldAlert className="w-4 h-4 shrink-0 mt-0.5" style={{ color: accent }} />
+                <div className="min-w-0">
+                  {isThirdParty ? (
+                    <>
+                      <p className="text-[12px] font-bold mb-0.5" style={{ color: accent }}>
+                        Third-party tool overriding Windows Firewall — blocking may not work
+                      </p>
+                      <p className="text-[11px] text-white/40">
+                        {firewallHealth.issue}
+                      </p>
+                    </>
+                  ) : (
+                    <>
+                      <p className="text-[12px] font-bold mb-0.5" style={{ color: accent }}>
+                        Windows Firewall is broken — blocking will not work
+                      </p>
+                      <p className="text-[11px] text-white/40 mb-2">
+                        Rules are written to the registry but the WFP kernel engine is not enforcing them. Run the following commands as admin to fix:
+                      </p>
+                      <div className="flex flex-wrap gap-2">
+                        {['sfc /scannow', 'DISM /Online /Cleanup-Image /RestoreHealth', 'netsh advfirewall reset'].map((cmd) => (
+                          <code
+                            key={cmd}
+                            className="text-[10px] px-2 py-1 rounded font-mono cursor-pointer select-text"
+                            style={{ background: `rgba(${accentRgb},0.12)`, border: `1px solid rgba(${accentRgb},0.25)`, color: '#ff8a80' }}
+                            title="Click to copy"
+                            onClick={() => navigator.clipboard.writeText(cmd)}
+                          >
+                            {cmd}
+                          </code>
+                        ))}
+                      </div>
+                      <p className="text-[10px] text-white/25 mt-1.5">
+                        Run sfc first, reboot, then retry. Use netsh reset only as a last resort (backs up existing rules first).
+                      </p>
+                    </>
+                  )}
+                </div>
+              </div>
+              <div className="flex items-center gap-2 shrink-0">
+                {!isThirdParty && (
+                  <button
+                    onClick={openRepairModal}
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[11px] font-bold uppercase tracking-wider transition-all hover:-translate-y-px"
+                    style={{ background: `rgba(${accentRgb},0.15)`, border: `1px solid rgba(${accentRgb},0.4)`, color: accent }}
+                  >
+                    <ShieldAlert className="w-3 h-3" />
+                    Auto-Repair
+                  </button>
+                )}
+                <button
+                  onClick={() => setFwBannerDismissed(true)}
+                  className="shrink-0 text-white/20 hover:text-white/50 transition-colors"
+                  title="Dismiss (until next launch)"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            </div>
+          </div>
+        )
+      })()}
 
       {/* Update banner */}
       {updateInfo?.available && (
@@ -564,6 +693,181 @@ export default function App() {
                   I understand — Block
                 </button>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Firewall Repair Modal ── */}
+      {showRepairModal && (
+        <div
+          className="fixed inset-0 z-[100] flex items-center justify-center"
+          style={{ background: 'rgba(0,0,0,0.85)', backdropFilter: 'blur(8px)' }}
+        >
+          <div
+            className="rounded-2xl p-8 w-[520px]"
+            style={{ background: 'rgba(18,18,18,0.99)', outline: '1px solid rgba(244,67,54,0.2)', outlineOffset: '-1px', boxShadow: '0 24px 80px rgba(0,0,0,0.9)' }}
+          >
+            {/* Header */}
+            <div className="flex items-start gap-4 mb-6">
+              <div
+                className="w-11 h-11 rounded-xl shrink-0 flex items-center justify-center"
+                style={{ background: 'rgba(244,67,54,0.1)', border: '1px solid rgba(244,67,54,0.3)' }}
+              >
+                <ShieldAlert className="w-5 h-5" style={{ color: '#F44336' }} />
+              </div>
+              <div>
+                <h2 className="text-[1rem] font-bold text-white mb-1">Firewall Auto-Repair</h2>
+                <p className="text-[12px] text-white/40 leading-relaxed">
+                  {repairResult
+                    ? repairResult.ok
+                      ? 'Repair completed. Your firewall rules have been restored.'
+                      : `Repair failed: ${repairResult.error}`
+                    : repairRunning
+                      ? 'Repair in progress — this may take 30-60 minutes. Do not close the app.'
+                      : 'Will backup your firewall rules, repair Windows system files, reset and restore the firewall. This takes 30-60 minutes.'}
+                </p>
+              </div>
+            </div>
+
+            {/* Steps */}
+            <div className="space-y-2 mb-6">
+              {repairSteps.map((step) => {
+                const color =
+                  step.status === 'done'    ? '#44FF41' :
+                  step.status === 'error'   ? '#F44336' :
+                  step.status === 'warning' ? '#FF9800' :
+                  step.status === 'running' ? '#B579FF' :
+                  'rgba(255,255,255,0.15)'
+                const icon =
+                  step.status === 'done'    ? '✓' :
+                  step.status === 'error'   ? '✗' :
+                  step.status === 'warning' ? '!' :
+                  step.status === 'running' ? '…' :
+                  '·'
+                return (
+                  <div
+                    key={step.id}
+                    className="flex items-start gap-3 px-4 py-2.5 rounded-xl"
+                    style={{
+                      background: step.status === 'pending' ? 'rgba(255,255,255,0.03)' : `rgba(${
+                        step.status === 'done' ? '68,255,65' :
+                        step.status === 'error' ? '244,67,54' :
+                        step.status === 'warning' ? '255,152,0' :
+                        step.status === 'running' ? '181,121,255' : '255,255,255'
+                      },0.06)`,
+                      border: `1px solid rgba(${
+                        step.status === 'done' ? '68,255,65' :
+                        step.status === 'error' ? '244,67,54' :
+                        step.status === 'warning' ? '255,152,0' :
+                        step.status === 'running' ? '181,121,255' : '255,255,255'
+                      },${step.status === 'pending' ? '0.06' : '0.18'})`
+                    }}
+                  >
+                    <span
+                      className={`text-[12px] font-bold w-4 shrink-0 mt-px ${step.status === 'running' ? 'animate-pulse' : ''}`}
+                      style={{ color }}
+                    >
+                      {icon}
+                    </span>
+                    <div className="min-w-0">
+                      <p className="text-[11px] font-semibold" style={{ color: step.status === 'pending' ? 'rgba(255,255,255,0.3)' : color }}>
+                        {step.label}
+                      </p>
+                      {step.detail && (
+                        <p className="text-[10px] font-mono mt-0.5 break-all" style={{ color: 'rgba(255,255,255,0.3)' }}>
+                          {step.detail}
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+
+            {/* Console — shown as soon as repair starts */}
+            {(repairRunning || repairResult) && (() => {
+              const repairLogs = logs.slice(repairLogOffset)
+              return (
+                <div className="mb-5 rounded-xl overflow-hidden" style={{ border: '1px solid rgba(255,255,255,0.07)' }}>
+                  <div className="px-3 py-1.5" style={{ background: 'rgba(255,255,255,0.02)', borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
+                    <span className="text-[9px] font-bold uppercase tracking-widest text-white/25 font-mono">Console</span>
+                  </div>
+                  <div className="h-28 overflow-y-auto px-3 py-2 space-y-0.5 font-mono" style={{ background: 'rgba(0,0,0,0.45)' }}>
+                    {repairLogs.length === 0 ? (
+                      <p className="text-[10px] text-white/15">Starting...</p>
+                    ) : repairLogs.map((entry) => {
+                      const color =
+                        entry.level === 'success' ? '#44FF41' :
+                        entry.level === 'warning' ? '#FF9800' :
+                        entry.level === 'error'   ? '#F44336' :
+                        entry.level === 'step'    ? 'rgba(255,255,255,0.22)' :
+                        'rgba(255,255,255,0.45)'
+                      const tag =
+                        entry.level === 'success' ? 'OK' :
+                        entry.level === 'warning' ? 'WARN' :
+                        entry.level === 'error'   ? 'ERR' :
+                        entry.level === 'step'    ? '›' :
+                        'INFO'
+                      return (
+                        <div key={entry.id} className="flex items-baseline gap-2 text-[10px] leading-[1.8]">
+                          <span className="font-bold shrink-0 w-7" style={{ color }}>{tag}</span>
+                          <span className="break-all" style={{ color }}>{entry.message}</span>
+                        </div>
+                      )
+                    })}
+                  </div>
+                </div>
+              )
+            })()}
+
+            {/* Reboot notice */}
+            {repairResult?.needsReboot && (
+              <div className="mb-5 px-4 py-2.5 rounded-xl flex items-center gap-2"
+                style={{ background: 'rgba(255,152,0,0.07)', border: '1px solid rgba(255,152,0,0.2)' }}
+              >
+                <AlertTriangle className="w-3.5 h-3.5 shrink-0" style={{ color: '#FF9800' }} />
+                <p className="text-[11px]" style={{ color: '#FF9800' }}>
+                  A reboot is recommended for sfc repairs to take full effect.
+                </p>
+              </div>
+            )}
+
+            {/* Actions */}
+            <div className="flex items-center justify-end gap-3">
+              {!repairRunning && !repairResult && (
+                <button
+                  onClick={() => setShowRepairModal(false)}
+                  className="px-5 py-2.5 rounded-xl text-[12px] font-bold uppercase tracking-wider transition-all hover:-translate-y-px"
+                  style={{ background: 'rgba(255,255,255,0.05)', border: '2px solid rgba(255,255,255,0.12)', color: '#999' }}
+                >
+                  Cancel
+                </button>
+              )}
+              {!repairRunning && repairResult && (
+                <button
+                  onClick={() => setShowRepairModal(false)}
+                  className="px-5 py-2.5 rounded-xl text-[12px] font-bold uppercase tracking-wider transition-all hover:-translate-y-px"
+                  style={{ background: 'rgba(255,255,255,0.05)', border: '2px solid rgba(255,255,255,0.12)', color: '#999' }}
+                >
+                  Close
+                </button>
+              )}
+              {!repairRunning && !repairResult && (
+                <button
+                  onClick={startRepair}
+                  className="px-6 py-2.5 rounded-xl text-[12px] font-bold uppercase tracking-wider transition-all hover:-translate-y-px"
+                  style={{ background: 'linear-gradient(135deg, #F44336 0%, #C62828 100%)', border: '2px solid rgba(244,67,54,0.4)', color: '#fff', boxShadow: '0 4px 12px rgba(244,67,54,0.3)' }}
+                >
+                  Start Repair
+                </button>
+              )}
+              {repairRunning && (
+                <div className="flex items-center gap-2 text-[12px] font-semibold" style={{ color: '#B579FF' }}>
+                  <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                  Running…
+                </div>
+              )}
             </div>
           </div>
         </div>
