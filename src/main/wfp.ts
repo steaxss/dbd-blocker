@@ -139,13 +139,14 @@ export async function wfpBlock(
   blockedState.set(regionId, filterIds.map(String))
   await saveState()
 
-  log('step', `[${regionId}] [3/3] Verifying (${filterIds.length}/${cidrs.length} filters)...`)
-  if (filterIds.length !== cidrs.length) {
-    log('warning', `[${regionId}] [3/3] Filter count mismatch (expected ${cidrs.length})`)
+  log('step', `[${regionId}] [3/3] Verifying WFP filter is active...`)
+  const spotCheck = await runScript(['-Action', 'check', '-FilterIdsJson', JSON.stringify([filterIds[0]])])
+  if (spotCheck.stdout.trim() === 'true') {
+    const partial = filterIds.length !== cidrs.length ? ` (partial: ${filterIds.length}/${cidrs.length} CIDRs)` : ''
+    log('success', `[${regionId}] Block confirmed — ${filterIds.length} WFP filter${filterIds.length !== 1 ? 's' : ''} active${partial}. Restart your game for changes to take effect.`)
   } else {
-    log('step', `[${regionId}] [3/3] OK`)
+    log('warning', `[${regionId}] WFP filters created but verification failed — ensure the app runs as Administrator.`)
   }
-  log('success', `[${regionId}] BLOCKED via WFP (${filterIds.length} CIDRs)`)
   return { ok: true }
 }
 
@@ -174,12 +175,36 @@ export async function wfpUnblock(
     return { ok: false, error: err }
   }
 
+  const psResult = res.stdout.trim()
+  if (psResult === 'false') {
+    log('warning', `[${regionId}] [1/2] WFP delete returned false — some filters may remain`)
+  }
+
   blockedState.delete(regionId)
   await saveState()
 
-  log('step', `[${regionId}] [1/2] OK`)
+  log('step', `[${regionId}] [1/2] OK (WFP: ${psResult})`)
   log('success', `[${regionId}] UNBLOCKED`)
   return { ok: true }
+}
+
+export async function wfpPurgeAll(log: LogEmitter): Promise<void> {
+  log('step', 'WFP purge — enumerating orphaned filters...')
+  const res = await runScript(['-Action', 'purge'])
+  if (!res.ok) {
+    log('warning', `WFP purge script error: ${res.stderr || res.stdout}`)
+    return
+  }
+  const count = parseInt(res.stdout.trim(), 10)
+  blockedState.clear()
+  await saveState()
+  if (count === -1) {
+    log('warning', 'WFP purge: FwpmFilterCreateEnumHandle0 failed — run as Administrator')
+  } else if (count === 0) {
+    log('info', 'WFP purge: no orphaned filters found')
+  } else {
+    log('success', `WFP purge: ${count} orphaned filter${count !== 1 ? 's' : ''} removed`)
+  }
 }
 
 export async function wfpUnblockMany(regionIds: string[], log: LogEmitter): Promise<void> {

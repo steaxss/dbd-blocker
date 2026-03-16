@@ -4,6 +4,7 @@ import {
   unblockRegion,
   getBlockedRegions,
   ruleExists,
+  purgeAllWfp,
   ps,
   checkFirewallHealth,
   repairFirewall
@@ -104,6 +105,9 @@ export function registerIpcHandlers(win: BrowserWindow): void {
         log('error', `[${regionId}] Exception: ${String(err)}`)
       }
     }
+    // Purge the WFP sublayer to remove any orphaned filters not tracked in state
+    await purgeAllWfp(log)
+    for (const regionId of REGION_IDS) sendStatus(win, regionId, false)
     log('success', 'Unblock All complete')
   })
 

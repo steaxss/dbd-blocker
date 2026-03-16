@@ -7,6 +7,7 @@ import {
   wfpBlock,
   wfpUnblock,
   wfpUnblockMany,
+  wfpPurgeAll,
 } from './wfp'
 
 export type { LogEmitter } from './wfp'
@@ -56,6 +57,10 @@ export async function unblockRegion(
 
 export async function unblockAll(regionIds: string[], log: LogEmitter): Promise<void> {
   return wfpUnblockMany(regionIds, log)
+}
+
+export async function purgeAllWfp(log: LogEmitter): Promise<void> {
+  return wfpPurgeAll(log)
 }
 
 export async function getBlockedRegions(regionIds: string[]): Promise<Record<string, boolean>> {

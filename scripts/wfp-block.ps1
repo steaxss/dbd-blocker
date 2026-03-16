@@ -31,6 +31,9 @@ public static class WfpMgr {
     [DllImport("fwpuclnt.dll")] static extern uint FwpmFilterAdd0(IntPtr h, IntPtr f, IntPtr sd, out ulong fid);
     [DllImport("fwpuclnt.dll")] static extern uint FwpmFilterDeleteById0(IntPtr h, ulong fid);
     [DllImport("fwpuclnt.dll")] static extern uint FwpmFilterGetById0(IntPtr h, ulong fid, out IntPtr fp);
+    [DllImport("fwpuclnt.dll")] static extern uint FwpmFilterCreateEnumHandle0(IntPtr h, IntPtr tmpl, out IntPtr eh);
+    [DllImport("fwpuclnt.dll")] static extern uint FwpmFilterEnum0(IntPtr h, IntPtr eh, uint req, out IntPtr entries, out uint ret);
+    [DllImport("fwpuclnt.dll")] static extern uint FwpmFilterDestroyEnumHandle0(IntPtr h, IntPtr eh);
     [DllImport("fwpuclnt.dll")] static extern void FwpmFreeMemory0(ref IntPtr p);
 
     // FWPM_LAYER_ALE_AUTH_CONNECT_V4
@@ -189,6 +192,55 @@ public static class WfpMgr {
         }
     }
 
+    /// <summary>
+    /// Enumerate ALL WFP filters, delete those belonging to our sublayer.
+    /// Returns count of deleted filters (-1 on enum error).
+    /// FWPM_FILTER0 layout (x64):
+    ///   [0]  filterKey GUID
+    ///   [80] subLayerKey GUID  ← we check this
+    ///   [176] filterId UINT64  ← we read this
+    /// </summary>
+    public static int Purge() {
+        IntPtr eng = OpenEngine();
+        IntPtr eh = IntPtr.Zero;
+        var toDelete = new List<ulong>();
+        try {
+            uint r = FwpmFilterCreateEnumHandle0(eng, IntPtr.Zero, out eh);
+            if (r != 0) return -1;
+            while (true) {
+                IntPtr entries = IntPtr.Zero;
+                uint returned = 0;
+                r = FwpmFilterEnum0(eng, eh, 200, out entries, out returned);
+                if (r != 0 || returned == 0) {
+                    if (entries != IntPtr.Zero) FwpmFreeMemory0(ref entries);
+                    break;
+                }
+                for (uint i = 0; i < returned; i++) {
+                    IntPtr fp = Marshal.ReadIntPtr(entries, (int)(i * IntPtr.Size));
+                    byte[] slKey = new byte[16];
+                    Marshal.Copy(new IntPtr(fp.ToInt64() + 80), slKey, 0, 16);
+                    if (new Guid(slKey) == SUBLAYER) {
+                        ulong fid = (ulong)Marshal.ReadInt64(fp, 176);
+                        toDelete.Add(fid);
+                    }
+                }
+                FwpmFreeMemory0(ref entries);
+                if (returned < 200) break;
+            }
+            FwpmFilterDestroyEnumHandle0(eng, eh);
+            eh = IntPtr.Zero;
+            int deleted = 0;
+            foreach (var fid in toDelete) {
+                uint dr = FwpmFilterDeleteById0(eng, fid);
+                if (dr == 0 || dr == 0x80320002) deleted++;
+            }
+            return deleted;
+        } finally {
+            if (eh != IntPtr.Zero) FwpmFilterDestroyEnumHandle0(eng, eh);
+            FwpmEngineClose0(eng);
+        }
+    }
+
     /// <summary>Delete WFP filters by ID. Returns true if all OK (not-found is OK too).</summary>
     public static bool Unblock(string filterIdsJson) {
         var ids = ParseUlongArray(filterIdsJson);
@@ -243,7 +295,7 @@ public static class WfpMgr {
         if (json.Length == 0) return new ulong[0];
         var result = new List<ulong>();
         foreach (var tok in json.Split(',')) {
-            var s = tok.Trim();
+            var s = tok.Trim().Trim('"');  // strip JSON string quotes
             ulong v;
             if (s.Length > 0 && ulong.TryParse(s, out v)) result.Add(v);
         }
@@ -265,6 +317,10 @@ try {
         'check' {
             $ok = [WfpMgr]::CheckExists($FilterIdsJson)
             Write-Output $ok.ToString().ToLower()
+        }
+        'purge' {
+            $n = [WfpMgr]::Purge()
+            Write-Output $n
         }
         default {
             Write-Error "Unknown action: $Action"
