@@ -34,6 +34,9 @@ export function useAppState() {
   const [initSteps, setInitSteps]   = useState<InitStep[]>(INIT_STEPS)
   const [needsExeSetup, setNeedsExeSetup] = useState(false)
 
+  // Prevent double-init in React StrictMode (dev only)
+  const initRanRef = useRef(false)
+
   // Refresh cooldown
   const lastRefreshRef = useRef<number>(0)
   const [refreshCooldown, setRefreshCooldown] = useState(0) // seconds remaining
@@ -87,6 +90,9 @@ export function useAppState() {
     function setStep(id: string, updates: Partial<InitStep>) {
       setInitSteps(prev => prev.map(s => s.id === id ? { ...s, ...updates } : s))
     }
+
+    if (initRanRef.current) return
+    initRanRef.current = true
 
     async function init() {
       // Step 1 — Admin check
@@ -158,6 +164,9 @@ export function useAppState() {
       setStep('rules', { status: 'done', detail: `${blocked.length} blocked` })
 
       setInitDone(true)
+
+      // WFP health check — logs result to console, no UI impact
+      window.api.checkFirewallHealth()
 
       // Check for update in background (non-blocking)
       window.api.checkForUpdate().then(info => {

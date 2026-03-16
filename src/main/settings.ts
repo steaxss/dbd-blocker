@@ -3,7 +3,7 @@ import { join } from 'path'
 import { readFile, writeFile } from 'fs/promises'
 import { existsSync } from 'fs'
 
-export const DEFAULT_DBD_EXE =
+const DEFAULT_DBD_EXE =
   'C:\\Program Files (x86)\\Steam\\steamapps\\common\\Dead by Daylight\\DeadByDaylight\\Binaries\\Win64\\DeadByDaylight-Win64-Shipping.exe'
 
 interface AppSettings {
@@ -18,7 +18,7 @@ function getSettingsPath(): string {
   return join(app.getPath('userData'), 'settings.json')
 }
 
-export async function getSettings(): Promise<AppSettings> {
+async function getSettings(): Promise<AppSettings> {
   if (cache) return cache
   const path = getSettingsPath()
   if (!existsSync(path)) {

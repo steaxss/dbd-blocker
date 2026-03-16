@@ -42,15 +42,8 @@ contextBridge.exposeInMainWorld('api', {
   getActiveConnections: () => ipcRenderer.invoke('get-active-connections'),
   resetUdpMonitor:      () => ipcRenderer.invoke('reset-udp-monitor'),
 
-  // Firewall health check + repair
+  // WFP health check (fire-and-forget — logs to console)
   checkFirewallHealth: () => ipcRenderer.invoke('check-firewall-health'),
-  repairFirewall:      () => ipcRenderer.invoke('repair-firewall'),
-
-  onRepairProgress: (callback: (update: { id: string; status: string; detail?: string }) => void) => {
-    const handler = (_: unknown, update: { id: string; status: string; detail?: string }) => callback(update)
-    ipcRenderer.on('repair-progress', handler)
-    return () => ipcRenderer.removeListener('repair-progress', handler)
-  },
 
   // Auto-update
   checkForUpdate: () => ipcRenderer.invoke('check-for-update'),

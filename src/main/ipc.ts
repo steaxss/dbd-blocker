@@ -1,13 +1,12 @@
-import { ipcMain, BrowserWindow, dialog, app, shell } from 'electron'
+import { ipcMain, BrowserWindow, dialog, app } from 'electron'
 import {
   blockRegion,
   unblockRegion,
   getBlockedRegions,
   ruleExists,
   purgeAllWfp,
-  ps,
   checkFirewallHealth,
-  repairFirewall
+  ps,
 } from './firewall'
 import { getCidrs, getCidrCounts, getCachedCidrs, fetchAndDiffCidrs } from './ips'
 import { REGION_IDS } from './index'
@@ -169,19 +168,10 @@ export function registerIpcHandlers(win: BrowserWindow): void {
     return validateExePath(path)
   })
 
-  // ── Firewall health check (WFP direct API prereq test) ────────────────────
-  ipcMain.handle('check-firewall-health', async () => {
-    const { join } = await import('path')
-    const scriptPath = join(app.getAppPath(), 'scripts', 'wfp-prereq.ps1')
-    return checkFirewallHealth(log, scriptPath)
-  })
-
-  // ── Firewall auto-repair ───────────────────────────────────────────────────
-  ipcMain.handle('repair-firewall', async () => {
-    const onStep = (update: { id: string; status: string; detail?: string }) => {
-      if (!win.isDestroyed()) win.webContents.send('repair-progress', update)
-    }
-    return repairFirewall(log, onStep, app.getPath('userData'))
+  // ── WFP health check — fire-and-forget, logs to console only ─────────────
+  ipcMain.handle('check-firewall-health', () => {
+    const { join } = require('path')
+    checkFirewallHealth(log, join(app.getAppPath(), 'scripts', 'wfp-prereq.ps1'))
   })
 
   // ── Admin check ────────────────────────────────────────────────────────────
