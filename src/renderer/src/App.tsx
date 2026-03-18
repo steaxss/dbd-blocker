@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { RefreshCw, ShieldOff, AlertTriangle, Settings, X, FolderOpen, Target, LayoutGrid, Globe2, Wifi, Activity, Pin, PinOff, Download } from 'lucide-react'
+import { RefreshCw, ShieldOff, AlertTriangle, Settings, X, FolderOpen, LayoutGrid, Globe2, Wifi, Activity, Download } from 'lucide-react'
 import { useAppState } from './hooks/useAppState'
 import { Titlebar } from './components/Header'
 import { RegionGrid } from './components/RegionGrid'
@@ -19,8 +19,6 @@ export default function App() {
     globalLoading,
     blockedCount,
     permanentRegions,
-    exclusiveRegion,
-    isExclusiveSaved,
     updateInfo,
     serverStatus,
     exePath,
@@ -32,10 +30,6 @@ export default function App() {
     unblockRegion,
     unblockAll,
     refreshIps,
-    activateExclusive,
-    deactivateExclusive,
-    saveExclusive,
-    unsaveExclusive,
     markRegionPermanent,
     unmarkRegionPermanent,
     updateExePath,
@@ -75,9 +69,6 @@ export default function App() {
 
   // Tooltip hover state for status chips
   const [hoveredChip, setHoveredChip] = useState<'blocked' | 'open' | null>(null)
-
-  // Force Region mode — selection state
-  const [isSelectingExclusive, setIsSelectingExclusive] = useState(false)
 
   // Block warning modal — shown before any block action
   const [pendingBlockAction, setPendingBlockAction] = useState<(() => Promise<void>) | null>(null)
@@ -126,11 +117,6 @@ export default function App() {
     setExePathResult(result)
     setSavingExe(false)
     if (result.ok) setShowExeSetupModal(false)
-  }
-
-  function handleActivateExclusive(regionId: string) {
-    setIsSelectingExclusive(false)
-    withBlockWarning(() => activateExclusive(regionId))
   }
 
   // Derived lists for tooltip
@@ -274,17 +260,6 @@ export default function App() {
               </div>
             )}
 
-            {/* Exclusive mode active indicator */}
-            {exclusiveRegion && (
-              <div
-                className="flex items-center gap-1.5 rounded-full px-3 py-1.5 text-[12px] font-bold uppercase tracking-[0.06em]"
-                style={{ background: 'rgba(181,121,255,0.15)', color: '#B579FF', border: '1px solid rgba(181,121,255,0.35)' }}
-              >
-                <Target className="w-3.5 h-3.5" />
-                Force Region: {REGIONS.find(r => r.id === exclusiveRegion)?.name ?? exclusiveRegion}
-                {isExclusiveSaved && <Pin className="w-3 h-3 ml-0.5" />}
-              </div>
-            )}
           </div>
 
           {/* View toggle */}
@@ -344,49 +319,6 @@ export default function App() {
               Ping All
             </button>
 
-            {/* Exclusive Mode buttons */}
-            {exclusiveRegion ? (
-              <>
-                {/* Pin/Unpin exclusive mode */}
-                <button
-                  onClick={isExclusiveSaved ? unsaveExclusive : saveExclusive}
-                  disabled={globalLoading}
-                  className="flex items-center justify-center w-8 h-8 rounded-lg transition-all duration-200 disabled:opacity-30 hover:-translate-y-px"
-                  style={isExclusiveSaved
-                    ? { background: 'rgba(181,121,255,0.15)', border: '2px solid rgba(181,121,255,0.45)', color: '#B579FF' }
-                    : { background: 'rgba(255,255,255,0.05)', border: '2px solid rgba(255,255,255,0.15)', color: 'rgba(255,255,255,0.4)' }
-                  }
-                  title={isExclusiveSaved ? 'Unsave Force Region (will not persist on restart)' : 'Save Force Region (persists on restart)'}
-                >
-                  {isExclusiveSaved ? <Pin className="w-3.5 h-3.5" /> : <PinOff className="w-3.5 h-3.5" />}
-                </button>
-
-                {/* Disable Exclusive */}
-                <button
-                  onClick={deactivateExclusive}
-                  disabled={globalLoading}
-                  className="flex items-center gap-1.5 px-4 py-1.5 rounded-[10px] text-[13px] font-bold uppercase tracking-[0.08em] transition-all duration-200 disabled:opacity-30 hover:-translate-y-px"
-                  style={{ background: 'rgba(181,121,255,0.12)', border: '2px solid rgba(181,121,255,0.35)', color: '#B579FF' }}
-                >
-                  <X className="w-3.5 h-3.5" />
-                  Disable Force Region
-                </button>
-              </>
-            ) : (
-              <button
-                onClick={() => setIsSelectingExclusive(v => !v)}
-                disabled={globalLoading}
-                className="flex items-center gap-1.5 px-4 py-1.5 rounded-[10px] text-[13px] font-bold uppercase tracking-[0.08em] transition-all duration-200 disabled:opacity-30 hover:-translate-y-px"
-                style={isSelectingExclusive
-                  ? { background: 'rgba(181,121,255,0.15)', border: '2px solid rgba(181,121,255,0.5)', color: '#B579FF' }
-                  : { background: 'rgba(255,255,255,0.05)', border: '2px solid rgba(255,255,255,0.15)', color: '#ccc' }
-                }
-              >
-                <Target className="w-3.5 h-3.5" />
-                Force Region
-              </button>
-            )}
-
             <button
               onClick={unblockAll}
               disabled={globalLoading || blockedCount === 0}
@@ -408,61 +340,23 @@ export default function App() {
           <MapView
             regions={regions}
             permanentRegions={permanentRegions}
-            exclusiveRegion={exclusiveRegion}
-            isSelectingExclusive={isSelectingExclusive}
             serverStatus={serverStatus}
             onBlock={handleBlock}
             onUnblock={unblockRegion}
-            onActivateExclusive={handleActivateExclusive}
-            onDeactivateExclusive={deactivateExclusive}
             onPingRegion={pingRegion}
             globalLoading={globalLoading}
           />
         ) : (
           <div className="h-full overflow-y-auto">
-            {/* Exclusive selection mode banner */}
-            {isSelectingExclusive && (
-              <div
-                className="sticky top-0 z-20 flex items-center justify-between px-6 py-3"
-                style={{
-                  background: 'rgba(181,121,255,0.1)',
-                  borderBottom: '1px solid rgba(181,121,255,0.22)',
-                  backdropFilter: 'blur(12px)',
-                }}
-                onClick={e => e.stopPropagation()}
-              >
-                <div className="flex items-center gap-2.5">
-                  <Target className="w-4 h-4 shrink-0" style={{ color: '#B579FF' }} />
-                  <span className="text-[12px] font-bold uppercase tracking-widest" style={{ color: '#B579FF' }}>
-                    Force Region
-                  </span>
-                  <span className="text-[11px] text-white/40 font-medium">
-                    — click a region to force DBD to connect only to that server
-                  </span>
-                </div>
-                <button
-                  onClick={() => setIsSelectingExclusive(false)}
-                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[11px] font-bold uppercase tracking-wider transition-colors duration-150 hover:text-white/70"
-                  style={{ background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.1)', color: 'rgba(255,255,255,0.4)' }}
-                >
-                  <X className="w-3 h-3" />
-                  Cancel
-                </button>
-              </div>
-            )}
-
             <div className="mx-auto max-w-5xl px-6 py-5">
               <RegionGrid
                 regions={regions}
                 permanentRegions={permanentRegions}
-                exclusiveRegion={exclusiveRegion}
-                isSelectingExclusive={isSelectingExclusive}
                 serverStatus={serverStatus}
                 onBlock={handleBlock}
                 onUnblock={unblockRegion}
                 onMarkPermanent={markRegionPermanent}
                 onUnmarkPermanent={unmarkRegionPermanent}
-                onSelectExclusive={handleActivateExclusive}
                 onPing={pingRegion}
               />
             </div>

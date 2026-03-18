@@ -2,7 +2,7 @@ import 'leaflet/dist/leaflet.css'
 import { useState, useMemo, useCallback, useRef, useEffect } from 'react'
 import { MapContainer, TileLayer, Marker, Popup, useMapEvents } from 'react-leaflet'
 import L from 'leaflet'
-import { Shield, ShieldOff, MousePointerClick, Target, X, Wifi } from 'lucide-react'
+import { Shield, ShieldOff, MousePointerClick, Wifi } from 'lucide-react'
 import { REGIONS, regionsByContinent } from '../regions'
 import { FlagIcon } from './FlagIcon'
 import type { RegionState, ServerStatusMap } from '../types'
@@ -14,31 +14,27 @@ function MapEvents({ onInteract }: { onInteract: () => void }) {
   return null
 }
 
-function makeIcon(status: string, isPermanent: boolean, isSelected: boolean, isExclusive: boolean, isGameOffline: boolean): L.DivIcon {
+function makeIcon(status: string, isPermanent: boolean, isSelected: boolean, isGameOffline: boolean): L.DivIcon {
   const blocked = status === 'blocked'
   const loading  = status === 'loading'
 
-  const dotColor = isExclusive                ? '#B579FF'
-                 : isPermanent && blocked     ? '#FF9800'
+  const dotColor = isPermanent && blocked     ? '#FF9800'
                  : blocked                   ? '#F44336'
                  : loading                   ? 'rgba(255,255,255,0.3)'
                  : isGameOffline             ? '#6B7280'
                  :                             '#44FF41'
 
-  const glow = isExclusive                ? 'rgba(181,121,255,0.75)'
-             : isPermanent && blocked     ? 'rgba(255,152,0,0.75)'
+  const glow = isPermanent && blocked     ? 'rgba(255,152,0,0.75)'
              : blocked                   ? 'rgba(244,67,54,0.75)'
              : loading                   ? 'rgba(255,255,255,0.15)'
              : isGameOffline             ? 'rgba(107,114,128,0.5)'
              :                             'rgba(68,255,65,0.75)'
 
-  const s = isSelected || isExclusive ? 20 : 12
+  const s = isSelected ? 20 : 12
   const border = isSelected
     ? '2px solid rgba(181,121,255,0.95)'
-    : isExclusive
-    ? '2px solid rgba(181,121,255,0.7)'
     : '1.5px solid rgba(255,255,255,0.35)'
-  const outerRing = isSelected || isExclusive
+  const outerRing = isSelected
     ? `, 0 0 0 4px rgba(181,121,255,0.18), 0 0 0 8px rgba(181,121,255,0.07)`
     : ''
 
@@ -54,13 +50,9 @@ function makeIcon(status: string, isPermanent: boolean, isSelected: boolean, isE
 interface MapViewProps {
   regions:              RegionState[]
   permanentRegions:     string[]
-  exclusiveRegion:      string | null
-  isSelectingExclusive: boolean
   serverStatus:         ServerStatusMap
   onBlock:              (id: string) => void
   onUnblock:            (id: string) => void
-  onActivateExclusive:  (id: string) => void
-  onDeactivateExclusive: () => void
   onPingRegion:         (id: string) => void
   globalLoading:        boolean
 }
@@ -68,13 +60,9 @@ interface MapViewProps {
 export function MapView({
   regions,
   permanentRegions,
-  exclusiveRegion,
-  isSelectingExclusive,
   serverStatus,
   onBlock,
   onUnblock,
-  onActivateExclusive,
-  onDeactivateExclusive,
   onPingRegion,
   globalLoading,
 }: MapViewProps) {
@@ -98,12 +86,8 @@ export function MapView({
   }, [])
 
   const handleMarkerClick = useCallback((id: string) => {
-    if (isSelectingExclusive) {
-      onActivateExclusive(id)
-    } else {
-      toggle(id)
-    }
-  }, [isSelectingExclusive, onActivateExclusive, toggle])
+    toggle(id)
+  }, [toggle])
 
   const regionMap = useMemo(() => new Map(regions.map(r => [r.id, r])), [regions])
 
@@ -173,19 +157,18 @@ export function MapView({
             if (!state) return null
             const isPerm   = permanentRegions.includes(region.id)
             const isSel    = selected.has(region.id)
-            const isExcl   = exclusiveRegion === region.id
 
-            const statusColor = isExcl ? '#B579FF' : state.status === 'blocked' ? (isPerm ? '#FF9800' : '#F44336') : '#44FF41'
-            const statusLabel = isExcl ? 'Force Region' : isPerm && state.status === 'blocked' ? 'Permanent Block' : state.status.toUpperCase()
+            const statusColor = state.status === 'blocked' ? (isPerm ? '#FF9800' : '#F44336') : '#44FF41'
+            const statusLabel = isPerm && state.status === 'blocked' ? 'Permanent Block' : state.status.toUpperCase()
             const srv = serverStatus[region.id]
             const qk  = srv ? formatQueueTime(srv.killerQueue)   : null
             const qs  = srv ? formatQueueTime(srv.survivorQueue) : null
 
             return (
               <Marker
-                key={`${region.id}-${state.status}-${isPerm}-${isSel}-${isExcl}-${srv?.online ?? 'x'}-${srv?.killerQueue ?? ''}-${srv?.survivorQueue ?? ''}`}
+                key={`${region.id}-${state.status}-${isPerm}-${isSel}-${srv?.online ?? 'x'}-${srv?.killerQueue ?? ''}-${srv?.survivorQueue ?? ''}`}
                 position={[region.lat, region.lng]}
-                icon={makeIcon(state.status, isPerm, isSel, isExcl, srv !== undefined && !srv.online && state.status !== 'blocked')}
+                icon={makeIcon(state.status, isPerm, isSel, srv !== undefined && !srv.online && state.status !== 'blocked')}
                 eventHandlers={{
                   click: () => handleMarkerClick(region.id),
                   mouseover: (e) => {
@@ -202,7 +185,7 @@ export function MapView({
                 }}
               >
                 {/* Click popup — full detail */}
-                {!isSelectingExclusive && (
+                {(
                   <Popup autoPan={false} minWidth={230} maxWidth={290}>
                     <div style={{ padding: '14px 16px 12px', fontFamily: 'Poppins, sans-serif' }}>
                       {/* Server ID */}
@@ -448,7 +431,6 @@ export function MapView({
             { color: '#6B7280',  label: 'Game Offline', noGlow: true },
             { color: '#F44336',  label: 'Blocked' },
             { color: '#FF9800',  label: 'Permanent' },
-            { color: '#B579FF',  label: 'Force Region' },
           ].map(({ color, label, noGlow }) => (
             <div key={label} className="flex items-center gap-2">
               <div className="w-2.5 h-2.5 rounded-full shrink-0" style={{ background: color, boxShadow: noGlow ? 'none' : `0 0 6px ${color}` }} />
@@ -457,21 +439,8 @@ export function MapView({
           ))}
         </div>
 
-        {/* Exclusive selection banner */}
-        {isSelectingExclusive && (
-          <div
-            className="absolute top-3 left-1/2 -translate-x-1/2 z-[400] flex items-center gap-2 px-4 py-2 rounded-full"
-            style={{ background: 'rgba(181,121,255,0.15)', border: '1px solid rgba(181,121,255,0.4)', backdropFilter: 'blur(8px)' }}
-          >
-            <Target className="w-3.5 h-3.5" style={{ color: '#B579FF' }} />
-            <span className="text-[11px] font-bold uppercase tracking-wider" style={{ color: '#B579FF' }}>
-              Click a server to activate Force Region
-            </span>
-          </div>
-        )}
-
-        {/* Click hint (when not selecting exclusive) */}
-        {selectedCount === 0 && !isSelectingExclusive && (
+        {/* Click hint */}
+        {selectedCount === 0 && (
           <div
             className="absolute top-4 left-1/2 -translate-x-1/2 z-[400] flex items-center gap-2 px-3 py-1.5 rounded-full"
             style={{ background: 'rgba(10,10,10,0.85)', border: '1px solid rgba(255,255,255,0.08)', backdropFilter: 'blur(8px)' }}
@@ -499,38 +468,15 @@ export function MapView({
           </div>
         </div>
 
-        {/* Exclusive mode active banner in sidebar */}
-        {exclusiveRegion && (
-          <div
-            className="px-4 py-2.5 flex items-center gap-2"
-            style={{ background: 'rgba(181,121,255,0.08)', borderBottom: '1px solid rgba(181,121,255,0.15)' }}
-          >
-            <Target className="w-3 h-3 shrink-0" style={{ color: '#B579FF' }} />
-            <div className="flex-1 min-w-0">
-              <div className="text-[9px] font-bold uppercase tracking-widest" style={{ color: '#B579FF' }}>Force Region</div>
-              <div className="text-[10px] text-white/40 truncate">{REGIONS.find(r => r.id === exclusiveRegion)?.name}</div>
-            </div>
-            <button
-              onClick={onDeactivateExclusive}
-              className="shrink-0 w-5 h-5 flex items-center justify-center rounded-md transition-colors hover:bg-white/10"
-              style={{ color: 'rgba(181,121,255,0.6)' }}
-            >
-              <X className="w-3 h-3" />
-            </button>
-          </div>
-        )}
-
         {/* Selection bar */}
         <div className="px-4 py-2.5 border-b border-white/[0.05] flex items-center justify-between">
           <span className="text-[10px] font-semibold uppercase tracking-wider text-white/35">
-            {isSelectingExclusive
-              ? 'Click server to force'
-              : selectedCount > 0
+            {selectedCount > 0
               ? `${selectedCount} selected`
               : 'None selected'}
           </span>
           <div className="flex items-center gap-1">
-            {selectedCount > 0 && !isSelectingExclusive && (
+            {selectedCount > 0 && (
               <button
                 onClick={() => setSelected(new Set())}
                 className="text-[9px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded transition-colors hover:text-white/60"
@@ -539,15 +485,13 @@ export function MapView({
                 Clear
               </button>
             )}
-            {!isSelectingExclusive && (
-              <button
-                onClick={() => setSelected(new Set(REGIONS.map(r => r.id)))}
-                className="text-[9px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded transition-colors hover:text-white/60"
-                style={{ background: 'rgba(255,255,255,0.05)', color: 'rgba(255,255,255,0.3)', border: '1px solid rgba(255,255,255,0.08)' }}
-              >
-                All
-              </button>
-            )}
+            <button
+              onClick={() => setSelected(new Set(REGIONS.map(r => r.id)))}
+              className="text-[9px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded transition-colors hover:text-white/60"
+              style={{ background: 'rgba(255,255,255,0.05)', color: 'rgba(255,255,255,0.3)', border: '1px solid rgba(255,255,255,0.08)' }}
+            >
+              All
+            </button>
           </div>
         </div>
 
@@ -572,41 +516,33 @@ export function MapView({
                 const state     = regionMap.get(region.id)
                 const isSel     = selected.has(region.id)
                 const isPerm    = permanentRegions.includes(region.id)
-                const isExcl    = exclusiveRegion === region.id
                 const isBlocked = state?.status === 'blocked'
-                const dotColor  = isExcl ? '#B579FF' : isPerm && isBlocked ? '#FF9800' : isBlocked ? '#F44336' : '#44FF41'
+                const dotColor  = isPerm && isBlocked ? '#FF9800' : isBlocked ? '#F44336' : '#44FF41'
                 const ping      = pingLabel(state!)
 
                 return (
                   <button
                     key={region.id}
-                    onClick={() => {
-                      if (isSelectingExclusive) onActivateExclusive(region.id)
-                      else toggle(region.id)
-                    }}
+                    onClick={() => toggle(region.id)}
                     className="w-full flex items-center gap-2.5 px-4 py-2 text-left transition-all duration-100"
                     style={{
-                      background:   isExcl ? 'rgba(181,121,255,0.1)' : isSel ? 'rgba(181,121,255,0.07)' : 'transparent',
+                      background:   isSel ? 'rgba(181,121,255,0.07)' : 'transparent',
                       borderBottom: '1px solid rgba(255,255,255,0.03)',
-                      borderLeft:   `2px solid ${isExcl ? 'rgba(181,121,255,0.7)' : isSel ? 'rgba(181,121,255,0.55)' : 'transparent'}`,
+                      borderLeft:   `2px solid ${isSel ? 'rgba(181,121,255,0.55)' : 'transparent'}`,
                     }}
-                    onMouseEnter={e => { if (!isSel && !isExcl) e.currentTarget.style.background = 'rgba(255,255,255,0.025)' }}
-                    onMouseLeave={e => { if (!isSel && !isExcl) e.currentTarget.style.background = 'transparent' }}
+                    onMouseEnter={e => { if (!isSel) e.currentTarget.style.background = 'rgba(255,255,255,0.025)' }}
+                    onMouseLeave={e => { if (!isSel) e.currentTarget.style.background = 'transparent' }}
                   >
-                    {/* Checkbox or exclusive icon */}
-                    {isExcl ? (
-                      <Target className="shrink-0 w-3.5 h-3.5" style={{ color: '#B579FF' }} />
-                    ) : (
-                      <div
-                        className="shrink-0 w-3.5 h-3.5 rounded flex items-center justify-center"
-                        style={{
-                          border:     `1.5px solid ${isSel ? 'rgba(181,121,255,0.7)' : 'rgba(255,255,255,0.18)'}`,
-                          background: isSel ? 'rgba(181,121,255,0.2)' : 'transparent',
-                        }}
-                      >
-                        {isSel && <div style={{ width: 5, height: 5, borderRadius: 1, background: '#B579FF' }} />}
-                      </div>
-                    )}
+                    {/* Checkbox */}
+                    <div
+                      className="shrink-0 w-3.5 h-3.5 rounded flex items-center justify-center"
+                      style={{
+                        border:     `1.5px solid ${isSel ? 'rgba(181,121,255,0.7)' : 'rgba(255,255,255,0.18)'}`,
+                        background: isSel ? 'rgba(181,121,255,0.2)' : 'transparent',
+                      }}
+                    >
+                      {isSel && <div style={{ width: 5, height: 5, borderRadius: 1, background: '#B579FF' }} />}
+                    </div>
 
                     {/* Flag (SVG) */}
                     <FlagIcon
@@ -666,7 +602,7 @@ export function MapView({
         >
           <button
             onClick={handleBlockSelected}
-            disabled={selectedCount === 0 || globalLoading || isSelectingExclusive}
+            disabled={selectedCount === 0 || globalLoading}
             className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl text-[11px] font-bold uppercase tracking-widest transition-all duration-150 disabled:opacity-25"
             style={{
               background: 'linear-gradient(135deg, #F44336 0%, #C62828 100%)',
@@ -681,7 +617,7 @@ export function MapView({
 
           <button
             onClick={handleUnblockSelected}
-            disabled={selectedCount === 0 || globalLoading || isSelectingExclusive}
+            disabled={selectedCount === 0 || globalLoading}
             className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl text-[11px] font-bold uppercase tracking-widest transition-all duration-150 disabled:opacity-25"
             style={{
               background: 'rgba(255,255,255,0.05)',

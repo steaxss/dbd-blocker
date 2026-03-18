@@ -1,33 +1,27 @@
 import { useState, useEffect } from 'react'
-import { Shield, ShieldOff, Loader2, AlertCircle, Lock, Unlock, Target, Wifi } from 'lucide-react'
+import { Shield, ShieldOff, Loader2, AlertCircle, Lock, Unlock, Wifi } from 'lucide-react'
 import { FlagIcon } from './FlagIcon'
 import type { RegionState, ServerInfo } from '../types'
 
 interface RegionCardProps {
   region: RegionState
   isPermanent: boolean
-  isExclusive: boolean
-  isSelectingExclusive: boolean
   serverInfo?: ServerInfo
   onBlock: () => void
   onUnblock: () => void
   onMarkPermanent: () => void
   onUnmarkPermanent: () => void
-  onSelectExclusive: () => void
   onPing: () => void
 }
 
 export function RegionCard({
   region,
   isPermanent,
-  isExclusive,
-  isSelectingExclusive,
   serverInfo,
   onBlock,
   onUnblock,
   onMarkPermanent,
   onUnmarkPermanent,
-  onSelectExclusive,
   onPing,
 }: RegionCardProps) {
   const isBlocked = region.status === 'blocked'
@@ -77,25 +71,7 @@ export function RegionCard({
   }
 
   // Card style
-  const cardStyle = isSelectingExclusive
-    ? {
-        background:    'rgba(255, 255, 255, 0.02)',
-        outline:       '1px solid rgba(255, 255, 255, 0.07)',
-        outlineOffset: '-1px',
-        boxShadow:     '0 4px 16px rgba(0,0,0,0.3)',
-        opacity: 0.45,
-        filter: 'saturate(0.3)',
-        cursor: 'pointer',
-        transition: 'all 0.15s ease',
-      }
-    : isExclusive
-    ? {
-        background:    'rgba(181, 121, 255, 0.08)',
-        outline:       '1px solid rgba(181, 121, 255, 0.35)',
-        outlineOffset: '-1px',
-        boxShadow:     '0 8px 32px rgba(0,0,0,0.5)',
-      }
-    : isBlocked
+  const cardStyle = isBlocked
     ? {
         background:    isPermanent ? 'rgba(255, 152, 0, 0.06)' : 'rgba(244, 67, 54, 0.08)',
         outline:       isPermanent ? '1px solid rgba(255, 152, 0, 0.35)' : '1px solid rgba(244, 67, 54, 0.35)',
@@ -118,34 +94,9 @@ export function RegionCard({
 
   return (
     <div
-      className={`group relative flex flex-col rounded-2xl p-4 backdrop-blur-sm ${!isSelectingExclusive ? 'transition-all duration-300 hover:-translate-y-0.5 hover:opacity-100' : ''}`}
+      className="group relative flex flex-col rounded-2xl p-4 backdrop-blur-sm transition-all duration-300 hover:-translate-y-0.5 hover:opacity-100"
       style={cardStyle}
-      onClick={isSelectingExclusive ? (e) => { e.stopPropagation(); onSelectExclusive() } : undefined}
-      onMouseEnter={isSelectingExclusive ? (e) => {
-        e.currentTarget.style.opacity = '1'
-        e.currentTarget.style.filter = 'saturate(1)'
-        e.currentTarget.style.transform = 'translateY(-2px)'
-        e.currentTarget.style.background = 'rgba(181, 121, 255, 0.11)'
-        e.currentTarget.style.outline = '1.5px solid rgba(181, 121, 255, 0.6)'
-      } : undefined}
-      onMouseLeave={isSelectingExclusive ? (e) => {
-        e.currentTarget.style.opacity = '0.45'
-        e.currentTarget.style.filter = 'saturate(0.3)'
-        e.currentTarget.style.transform = ''
-        e.currentTarget.style.background = 'rgba(255, 255, 255, 0.02)'
-        e.currentTarget.style.outline = '1px solid rgba(255, 255, 255, 0.07)'
-      } : undefined}
     >
-      {/* Exclusive badge */}
-      {isExclusive && !isSelectingExclusive && (
-        <div
-          className="absolute -top-2.5 left-1/2 -translate-x-1/2 text-[9px] font-bold uppercase tracking-widest px-2.5 py-0.5 rounded-full whitespace-nowrap"
-          style={{ background: 'rgba(181,121,255,0.25)', color: '#B579FF', border: '1px solid rgba(181,121,255,0.4)' }}
-        >
-          Force Region
-        </div>
-      )}
-
       {/* Top row: flag + status dot */}
       <div className="flex items-center justify-between mb-3">
         <FlagIcon
@@ -156,7 +107,7 @@ export function RegionCard({
 
         <div className="flex items-center gap-1.5">
           {/* Permanent badge */}
-          {isPermanent && isBlocked && !isSelectingExclusive && (
+          {isPermanent && isBlocked && (
             <span
               className="text-[9px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded"
               style={{ background: 'rgba(255,152,0,0.15)', color: '#FF9800', border: '1px solid rgba(255,152,0,0.3)' }}
@@ -165,9 +116,7 @@ export function RegionCard({
             </span>
           )}
 
-          {isSelectingExclusive ? (
-            <Target className="w-3.5 h-3.5" style={{ color: 'rgba(255,255,255,0.2)' }} />
-          ) : isLoading ? (
+          {isLoading ? (
             <Loader2 className="w-3.5 h-3.5 text-white/30 animate-spin" />
           ) : isBlocked ? (
             <span
@@ -279,19 +228,7 @@ export function RegionCard({
 
       {/* ── Bottom action area ── */}
       <div className="mt-auto">
-        {isSelectingExclusive ? (
-          <div
-            className="flex items-center justify-center gap-2 py-3 rounded-xl transition-all duration-150"
-            style={{
-              background: 'rgba(255,255,255,0.04)',
-              border: '1px solid rgba(255,255,255,0.08)',
-              color: 'rgba(255,255,255,0.2)',
-            }}
-          >
-            <Target className="w-3.5 h-3.5" />
-            <span className="text-[12px] font-bold uppercase tracking-widest">Force here</span>
-          </div>
-        ) : isLoading ? (
+        {isLoading ? (
           <div
             className="flex items-center justify-center gap-2 py-3 rounded-xl"
             style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)' }}
@@ -331,7 +268,7 @@ export function RegionCard({
         )}
 
         {/* Permanent control */}
-        {isBlocked && !isLoading && !isSelectingExclusive && (
+        {isBlocked && !isLoading && (
           isPermanent ? (
             <button
               onClick={onUnmarkPermanent}
@@ -366,7 +303,7 @@ export function RegionCard({
         )}
 
         {/* Ping button */}
-        {!isSelectingExclusive && (
+        {(
           <div className="relative mt-2 ping-btn-wrap">
             <button
               onClick={onPing}

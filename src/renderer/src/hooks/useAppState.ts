@@ -23,8 +23,6 @@ export function useAppState() {
   const [isAdmin, setIsAdmin]             = useState<boolean | null>(null)
   const [globalLoading, setGlobalLoading] = useState(false)
   const [permanentRegions, setPermanentRegions] = useState<string[]>([])
-  const [exclusiveRegion, setExclusiveRegion]   = useState<string | null>(null)
-  const [isExclusiveSaved, setIsExclusiveSaved] = useState(false)
   const [exePath, setExePathState]        = useState('')
   const [updateInfo, setUpdateInfo]       = useState<UpdateInfo | null>(null)
   const [serverStatus, setServerStatus]   = useState<ServerStatusMap>({})
@@ -109,20 +107,14 @@ export function useAppState() {
 
       // Step 2 — Load settings + validate exe path
       setStep('settings', { status: 'running' })
-      const [path, permanent, savedExclusive] = await Promise.all([
+      const [path, permanent] = await Promise.all([
         window.api.getExePath(),
         window.api.getPermanentRegions(),
-        window.api.getExclusiveRegion()
       ])
       setExePathState(path)
       setPermanentRegions(permanent)
       if (permanent.length > 0) {
         addLog('warning', `Permanent blocks loaded: ${permanent.join(', ')}`)
-      }
-      if (savedExclusive) {
-        setExclusiveRegion(savedExclusive)
-        setIsExclusiveSaved(true)
-        addLog('warning', `Exclusive mode restored: ${savedExclusive}`)
       }
       const exeCheck = await window.api.checkExePath()
       if (!exeCheck.ok) {
@@ -315,41 +307,6 @@ export function useAppState() {
     addLog('success', parts.length > 0 ? `IP ranges updated: ${parts.join(', ')}` : 'IP ranges up to date — no changes')
   }, [addLog])
 
-  // ── Exclusive mode ─────────────────────────────────────────────────────────
-  const activateExclusive = useCallback(async (keepRegionId: string) => {
-    setGlobalLoading(true)
-    setRegions((prev) => prev.map((r) => ({ ...r, status: 'loading' as const })))
-    setExclusiveRegion(keepRegionId)
-    await window.api.blockExcept(keepRegionId)
-    setGlobalLoading(false)
-  }, [])
-
-  const deactivateExclusive = useCallback(async () => {
-    setExclusiveRegion(null)
-    setIsExclusiveSaved(false)
-    await window.api.setExclusiveRegion(null)
-    setGlobalLoading(true)
-    setRegions((prev) => prev.map((r) => ({ ...r, status: 'loading' as const })))
-    await window.api.unblockAll()
-    setRegions((prev) => {
-      const next = prev.map((r) => ({ ...r, status: 'active' as const }))
-      syncBlockedCount(next)
-      return next
-    })
-    setGlobalLoading(false)
-  }, [syncBlockedCount])
-
-  const saveExclusive = useCallback(async () => {
-    if (!exclusiveRegion) return
-    await window.api.setExclusiveRegion(exclusiveRegion)
-    setIsExclusiveSaved(true)
-  }, [exclusiveRegion])
-
-  const unsaveExclusive = useCallback(async () => {
-    await window.api.setExclusiveRegion(null)
-    setIsExclusiveSaved(false)
-  }, [])
-
   // ── Permanent regions ──────────────────────────────────────────────────────
   const markRegionPermanent = useCallback(async (regionId: string) => {
     await window.api.markPermanent(regionId)
@@ -413,8 +370,6 @@ export function useAppState() {
     globalLoading,
     blockedCount,
     permanentRegions,
-    exclusiveRegion,
-    isExclusiveSaved,
     updateInfo,
     serverStatus,
     exePath,
@@ -426,10 +381,6 @@ export function useAppState() {
     unblockRegion,
     unblockAll,
     refreshIps,
-    activateExclusive,
-    deactivateExclusive,
-    saveExclusive,
-    unsaveExclusive,
     markRegionPermanent,
     unmarkRegionPermanent,
     updateExePath,

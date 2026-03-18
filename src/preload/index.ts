@@ -14,7 +14,6 @@ contextBridge.exposeInMainWorld('api', {
   blockRegion:   (regionId: string) => ipcRenderer.invoke('block-region', regionId),
   unblockRegion: (regionId: string) => ipcRenderer.invoke('unblock-region', regionId),
   unblockAll:    () => ipcRenderer.invoke('unblock-all'),
-  blockExcept:   (keepRegionId: string) => ipcRenderer.invoke('block-except', keepRegionId),
   getStatus:     () => ipcRenderer.invoke('get-status'),
   getCidrCounts: () => ipcRenderer.invoke('get-cidr-counts'),
   refreshIps:    () => ipcRenderer.invoke('refresh-ips'),
@@ -30,10 +29,6 @@ contextBridge.exposeInMainWorld('api', {
   getPermanentRegions: () => ipcRenderer.invoke('get-permanent-regions'),
   markPermanent:       (regionId: string) => ipcRenderer.invoke('mark-permanent', regionId),
   unmarkPermanent:     (regionId: string) => ipcRenderer.invoke('unmark-permanent', regionId),
-
-  // Settings: exclusive region (persistent exclusive mode)
-  getExclusiveRegion: () => ipcRenderer.invoke('get-exclusive-region'),
-  setExclusiveRegion: (regionId: string | null) => ipcRenderer.invoke('set-exclusive-region', regionId),
 
   // Ping
   pingRegion: (regionId: string) => ipcRenderer.invoke('ping-region', regionId),

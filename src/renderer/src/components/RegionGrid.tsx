@@ -5,28 +5,22 @@ import type { RegionState, ServerStatusMap } from '../types'
 interface RegionGridProps {
   regions: RegionState[]
   permanentRegions: string[]
-  exclusiveRegion: string | null
-  isSelectingExclusive: boolean
   serverStatus: ServerStatusMap
   onBlock: (regionId: string) => void
   onUnblock: (regionId: string) => void
   onMarkPermanent: (regionId: string) => void
   onUnmarkPermanent: (regionId: string) => void
-  onSelectExclusive: (regionId: string) => void
   onPing: (regionId: string) => void
 }
 
 export function RegionGrid({
   regions,
   permanentRegions,
-  exclusiveRegion,
-  isSelectingExclusive,
   serverStatus,
   onBlock,
   onUnblock,
   onMarkPermanent,
   onUnmarkPermanent,
-  onSelectExclusive,
   onPing,
 }: RegionGridProps) {
   const regionMap = new Map(regions.map((r) => [r.id, r]))
@@ -43,7 +37,7 @@ export function RegionGrid({
               <span className="gradient-title text-[10px] font-bold uppercase tracking-[0.14em]">
                 {continent}
               </span>
-              {blockedCount > 0 && !isSelectingExclusive && (
+              {blockedCount > 0 && (
                 <span
                   className="text-[9px] font-bold uppercase tracking-[0.08em] px-2 py-0.5 rounded-full"
                   style={{
@@ -67,14 +61,11 @@ export function RegionGrid({
                     key={r.id}
                     region={state}
                     isPermanent={permanentRegions.includes(r.id)}
-                    isExclusive={exclusiveRegion === r.id}
-                    isSelectingExclusive={isSelectingExclusive}
                     serverInfo={serverStatus[r.id]}
                     onBlock={() => onBlock(r.id)}
                     onUnblock={() => onUnblock(r.id)}
                     onMarkPermanent={() => onMarkPermanent(r.id)}
                     onUnmarkPermanent={() => onUnmarkPermanent(r.id)}
-                    onSelectExclusive={() => onSelectExclusive(r.id)}
                     onPing={() => onPing(r.id)}
                   />
                 )

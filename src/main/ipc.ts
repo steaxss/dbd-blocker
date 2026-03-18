@@ -20,8 +20,6 @@ import {
   getPermanentRegions,
   markPermanent,
   unmarkPermanent,
-  getExclusiveRegion,
-  setExclusiveRegion
 } from './settings'
 
 const GITHUB_REPO = 'steaxs/dbd-blocker'
@@ -226,6 +224,12 @@ export function registerIpcHandlers(win: BrowserWindow): void {
   // ── Firewall: block one region ─────────────────────────────────────────────
   ipcMain.handle('block-region', async (_, regionId: string) => {
     try {
+      if (regionId === 'us-east-1') {
+        const msg = 'Cannot block us-east-1 — DBD backend server runs in this region'
+        log('error', msg)
+        return { ok: false, error: msg }
+      }
+
       const exePath = await requireValidExePath(log)
       if (!exePath) return { ok: false, error: 'DBD executable path not configured or invalid.' }
 
@@ -282,36 +286,6 @@ export function registerIpcHandlers(win: BrowserWindow): void {
     await purgeAllWfp(log)
     for (const regionId of REGION_IDS) sendStatus(win, regionId, false)
     log('success', 'Unblock All complete')
-  })
-
-  // ── Exclusive mode: block all except one region ───────────────────────────
-  ipcMain.handle('block-except', async (_, keepRegionId: string) => {
-    const exePath = await requireValidExePath(log)
-    if (!exePath) return
-
-    log('info', `Exclusive mode: keeping only ${keepRegionId} open...`)
-    for (const regionId of REGION_IDS) {
-      try {
-        if (regionId === keepRegionId) {
-          // Ensure this region is unblocked
-          if (await ruleExists(regionId)) {
-            await unblockRegion(regionId, log)
-            sendStatus(win, regionId, false)
-          }
-        } else {
-          const cidrs = await getCidrs(regionId)
-          if (cidrs.length === 0) {
-            log('warning', `${regionId}: skipped (no CIDRs)`)
-            continue
-          }
-          const result = await blockRegion(regionId, cidrs, log, exePath || undefined)
-          sendStatus(win, regionId, result.ok)
-        }
-      } catch (err) {
-        log('error', `[${regionId}] Exception: ${String(err)}`)
-      }
-    }
-    log('success', `Exclusive mode active — only ${keepRegionId} is reachable`)
   })
 
   // ── Startup queries ────────────────────────────────────────────────────────
@@ -480,18 +454,6 @@ export function registerIpcHandlers(win: BrowserWindow): void {
   ipcMain.handle('unmark-permanent', async (_, regionId: string) => {
     await unmarkPermanent(regionId)
     log('info', `[${regionId}] Permanent flag removed — rule will be cleared on app close`)
-  })
-
-  // ── Settings: exclusive region (permanent exclusive mode) ──────────────────
-  ipcMain.handle('get-exclusive-region', async () => getExclusiveRegion())
-
-  ipcMain.handle('set-exclusive-region', async (_, regionId: string | null) => {
-    await setExclusiveRegion(regionId)
-    if (regionId) {
-      log('warning', `[${regionId}] Exclusive mode saved — will be restored on next launch`)
-    } else {
-      log('info', 'Exclusive mode unsaved')
-    }
   })
 
   // ── Server status from deadbyqueue API ────────────────────────────────────

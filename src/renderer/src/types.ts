@@ -103,7 +103,6 @@ export interface ElectronAPI {
   blockRegion:   (regionId: string) => Promise<{ ok: boolean; error?: string }>
   unblockRegion: (regionId: string) => Promise<{ ok: boolean; error?: string }>
   unblockAll:    () => Promise<void>
-  blockExcept:   (keepRegionId: string) => Promise<void>
   getStatus:     () => Promise<Record<string, boolean>>
   getCidrCounts: () => Promise<Record<string, number>>
   refreshIps:    () => Promise<{ added: number; removed: number }>
@@ -117,9 +116,6 @@ export interface ElectronAPI {
   getPermanentRegions: () => Promise<string[]>
   markPermanent:       (regionId: string) => Promise<void>
   unmarkPermanent:     (regionId: string) => Promise<void>
-  // Settings: exclusive region
-  getExclusiveRegion: () => Promise<string | null>
-  setExclusiveRegion: (regionId: string | null) => Promise<void>
   // Tray sync
   sendBlockedCount: (count: number) => void
   // Ping
