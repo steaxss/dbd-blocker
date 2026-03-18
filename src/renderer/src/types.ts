@@ -50,15 +50,28 @@ export interface PingResult {
   error?: string
 }
 
-export interface UdpRegion {
-  regionId: string
+export interface TrackerCandidate {
   ip: string
+  port: number
+  score: number
+  lastSeen: number
+  count: number
+  regionId: string | null
 }
 
-export interface ActiveConnectionsResult {
-  running: boolean
-  udpRegions: UdpRegion[]
+export interface TrackerResult {
+  dbdRunning: boolean
+  current_server: string | null
+  currentRegion: string | null
+  confidence: number
+  candidates: TrackerCandidate[]
+  udpPorts: number[]
+  dbdPid: number
+  exitlagRunning: boolean
 }
+
+/** @deprecated use TrackerResult */
+export type ActiveConnectionsResult = TrackerResult
 
 export interface UpdateInfo {
   available: boolean
@@ -111,9 +124,14 @@ export interface ElectronAPI {
   sendBlockedCount: (count: number) => void
   // Ping
   pingRegion: (regionId: string) => Promise<PingResult>
-  // Active connections
-  getActiveConnections: () => Promise<ActiveConnectionsResult>
+  // UDP tracker
+  getActiveConnections: () => Promise<TrackerResult>
   resetUdpMonitor:      () => Promise<void>
+  startUdpTracker:      () => Promise<void>
+  stopUdpTracker:       () => Promise<void>
+  onUdpUpdate: (callback: (result: TrackerResult) => void) => () => void
+  // WFP health check (console only)
+  checkFirewallHealth: () => Promise<void>
   // Auto-update
   checkForUpdate: () => Promise<UpdateInfo>
   // Server status (deadbyqueue)

@@ -403,12 +403,7 @@ export default function App() {
       {/* Main content */}
       <div className="flex-1 overflow-hidden relative z-10" onClick={() => setHoveredChip(null)}>
         {view === 'connections' ? (
-          <ActiveConnections
-            onBlock={handleBlock}
-            onUnblock={unblockRegion}
-            permanentRegions={permanentRegions}
-            blockedRegions={regions.filter(r => r.status === 'blocked').map(r => r.id)}
-          />
+          <ActiveConnections />
         ) : view === 'map' ? (
           <MapView
             regions={regions}
@@ -497,8 +492,8 @@ export default function App() {
                 <AlertTriangle className="w-5 h-5" style={{ color: '#F44336' }} />
               </div>
               <div>
-                <h2 className="text-[1rem] font-bold text-white mb-1">Before you block</h2>
-                <p className="text-[12px] text-white/40 leading-relaxed">
+                <h2 className="text-[1.2rem] font-bold text-white mb-1">Before you block</h2>
+                <p className="text-[13px] text-white/40 leading-relaxed">
                   Blocking a region prevents DBD from connecting to those servers. For this to work reliably, read the following.
                 </p>
               </div>
@@ -506,10 +501,10 @@ export default function App() {
 
             {/* Host requirement */}
             <div className="mb-4 p-4 rounded-xl" style={{ background: 'rgba(244,67,54,0.07)', border: '1px solid rgba(244,67,54,0.22)' }}>
-              <p className="text-[11px] font-bold uppercase tracking-wider mb-2" style={{ color: '#F44336' }}>
+              <p className="text-[13px] font-bold uppercase tracking-wider mb-2" style={{ color: '#F44336' }}>
                 You must be the lobby host
               </p>
-              <p className="text-[11px] text-white/45 leading-relaxed">
+              <p className="text-[13px] text-white/45 leading-relaxed">
                 Whether you play <strong className="text-white/70">survivor or killer</strong>, in <strong className="text-white/70">public or private matches</strong> — you must always be the lobby host for the block to take effect.
                 <br /><br />
                 In public games, <strong className="text-white/70">invite friends into your lobby</strong> rather than joining theirs. In custom games, <strong className="text-white/70">create the lobby yourself</strong>.
@@ -522,16 +517,17 @@ export default function App() {
             <div className="mb-6 p-4 rounded-xl" style={{ background: 'rgba(255,152,0,0.06)', border: '1px solid rgba(255,152,0,0.18)' }}>
               <div className="flex items-center gap-2 mb-2">
                 <AlertTriangle className="w-3.5 h-3.5 shrink-0" style={{ color: '#FF9800' }} />
-                <span className="text-[11px] font-bold uppercase tracking-wider" style={{ color: '#FF9800' }}>Also keep in mind</span>
+                <span className="text-[13px] font-bold uppercase tracking-wider" style={{ color: '#FF9800' }}>Also keep in mind</span>
               </div>
               <ul className="space-y-1.5">
                 {[
+                  'Restart your game after applying or removing blocks for changes to take effect.',
                   'If a blocked region\'s server is offline or disabled by BHVR, DBD will find the next available region.',
                   'Use the Ping button on a region card to check whether a server is reachable before blocking others.',
                 ].map((text, i) => (
                   <li key={i} className="flex items-start gap-2">
-                    <span className="text-[10px] font-bold mt-0.5 shrink-0" style={{ color: '#FF9800' }}>›</span>
-                    <span className="text-[11px] text-white/40 leading-relaxed">{text}</span>
+                    <span className="text-[11px] font-bold mt-0.5 shrink-0" style={{ color: '#FF9800' }}>›</span>
+                    <span className="text-[13px] text-white/40 leading-relaxed">{text}</span>
                   </li>
                 ))}
               </ul>
@@ -546,19 +542,19 @@ export default function App() {
                   onChange={e => setDontShowAgain(e.target.checked)}
                   className="w-3.5 h-3.5 accent-[#B579FF] cursor-pointer"
                 />
-                <span className="text-[11px] text-white/30 group-hover:text-white/50 transition-colors">Don't show again</span>
+                <span className="text-[12px] text-white/30 group-hover:text-white/50 transition-colors">Don't show again</span>
               </label>
               <div className="flex items-center gap-2">
                 <button
                   onClick={() => setPendingBlockAction(null)}
-                  className="px-5 py-2.5 rounded-xl text-[12px] font-bold uppercase tracking-wider transition-all hover:-translate-y-px"
+                  className="px-5 py-2.5 rounded-xl text-[13px] font-bold uppercase tracking-wider transition-all hover:-translate-y-px"
                   style={{ background: 'rgba(255,255,255,0.05)', border: '2px solid rgba(255,255,255,0.12)', color: '#999' }}
                 >
                   Cancel
                 </button>
                 <button
                   onClick={confirmBlock}
-                  className="px-6 py-2.5 rounded-xl text-[12px] font-bold uppercase tracking-wider transition-all hover:-translate-y-px active:translate-y-0"
+                  className="px-6 py-2.5 rounded-xl text-[13px] font-bold uppercase tracking-wider transition-all hover:-translate-y-px active:translate-y-0"
                   style={{ background: 'linear-gradient(135deg, #F44336 0%, #C62828 100%)', border: '2px solid rgba(244,67,54,0.4)', color: '#fff', boxShadow: '0 4px 12px rgba(244,67,54,0.35)' }}
                 >
                   I understand — Block
@@ -590,8 +586,8 @@ export default function App() {
                 <AlertTriangle className="w-5 h-5" style={{ color: '#F44336' }} />
               </div>
               <div>
-                <h2 className="text-[1rem] font-bold text-white mb-1">Executable Not Found</h2>
-                <p className="text-[12px] text-white/40 leading-relaxed">
+                <h2 className="text-[1.2rem] font-bold text-white mb-1">Executable Not Found</h2>
+                <p className="text-[13px] text-white/40 leading-relaxed">
                   Dead by Daylight was not found at the configured path.<br />
                   Firewall rules cannot be applied until you set the correct executable.
                 </p>
@@ -599,40 +595,40 @@ export default function App() {
             </div>
 
             <div className="mb-6 p-4 rounded-xl" style={{ background: 'rgba(255,152,0,0.07)', border: '1px solid rgba(255,152,0,0.22)' }}>
-              <p className="text-[11px] font-bold uppercase tracking-wider mb-2" style={{ color: '#FF9800' }}>
+              <p className="text-[13px] font-bold uppercase tracking-wider mb-2" style={{ color: '#FF9800' }}>
                 Important — Select the correct file
               </p>
               <div className="space-y-1.5">
                 <div className="flex items-center gap-2">
-                  <span className="text-[10px] font-bold px-1.5 py-0.5 rounded" style={{ background: 'rgba(68,255,65,0.1)', color: '#44FF41', border: '1px solid rgba(68,255,65,0.25)' }}>✓</span>
-                  <span className="text-[11px] font-mono text-white/70">DeadByDaylight-Win64-Shipping.exe</span>
-                  <span className="text-[10px] text-white/35 ml-auto">the game</span>
+                  <span className="text-[11px] font-bold px-1.5 py-0.5 rounded" style={{ background: 'rgba(68,255,65,0.1)', color: '#44FF41', border: '1px solid rgba(68,255,65,0.25)' }}>✓</span>
+                  <span className="text-[12px] font-mono text-white/70">DeadByDaylight-Win64-Shipping.exe</span>
+                  <span className="text-[11px] text-white/35 ml-auto">the game</span>
                 </div>
                 <div className="flex items-center gap-2">
-                  <span className="text-[10px] font-bold px-1.5 py-0.5 rounded" style={{ background: 'rgba(244,67,54,0.1)', color: '#F44336', border: '1px solid rgba(244,67,54,0.25)' }}>✗</span>
-                  <span className="text-[11px] font-mono text-white/40">DeadByDaylight.exe</span>
-                  <span className="text-[10px] text-white/25 ml-auto">launcher only</span>
+                  <span className="text-[11px] font-bold px-1.5 py-0.5 rounded" style={{ background: 'rgba(244,67,54,0.1)', color: '#F44336', border: '1px solid rgba(244,67,54,0.25)' }}>✗</span>
+                  <span className="text-[12px] font-mono text-white/40">DeadByDaylight.exe</span>
+                  <span className="text-[11px] text-white/25 ml-auto">launcher only</span>
                 </div>
               </div>
-              <p className="text-[10px] font-mono text-white/25 mt-3 leading-relaxed">
+              <p className="text-[11px] font-mono text-white/25 mt-3 leading-relaxed">
                 ...\Dead by Daylight\DeadByDaylight\Binaries\Win64\DeadByDaylight-Win64-Shipping.exe
               </p>
             </div>
 
             <div className="mb-6">
-              <label className="block text-[11px] font-bold uppercase tracking-widest text-white/50 mb-2">Executable Path</label>
+              <label className="block text-[13px] font-bold uppercase tracking-widest text-white/50 mb-2">Executable Path</label>
               <div className="flex gap-2 mb-2">
                 <input
                   value={exePathInput}
                   onChange={e => { setExePathInput(e.target.value); setExePathResult(null) }}
                   spellCheck={false}
-                  className="flex-1 px-4 py-2.5 rounded-xl text-[12px] font-mono text-white/80 outline-none"
+                  className="flex-1 px-4 py-2.5 rounded-xl text-[13px] font-mono text-white/80 outline-none"
                   style={{ background: 'rgba(255,255,255,0.06)', border: `1px solid ${exePathResult?.ok === false ? 'rgba(244,67,54,0.5)' : exePathResult?.ok ? 'rgba(68,255,65,0.35)' : 'rgba(255,255,255,0.12)'}` }}
                   placeholder="C:\...\DeadByDaylight-Win64-Shipping.exe"
                 />
                 <button
                   onClick={handleBrowseExe}
-                  className="flex items-center gap-1.5 px-3 py-2.5 rounded-xl text-[11px] font-bold uppercase tracking-wider transition-all hover:-translate-y-px"
+                  className="flex items-center gap-1.5 px-3 py-2.5 rounded-xl text-[12px] font-bold uppercase tracking-wider transition-all hover:-translate-y-px"
                   style={{ background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.15)', color: '#ccc' }}
                 >
                   <FolderOpen className="w-3.5 h-3.5" />
@@ -640,20 +636,20 @@ export default function App() {
                 </button>
               </div>
               {exePathResult && (
-                <p className="text-[11px] mt-1.5 leading-relaxed" style={{ color: exePathResult.ok ? (exePathResult.warning ? '#FF9800' : '#44FF41') : '#F44336' }}>
+                <p className="text-[12px] mt-1.5 leading-relaxed" style={{ color: exePathResult.ok ? (exePathResult.warning ? '#FF9800' : '#44FF41') : '#F44336' }}>
                   {exePathResult.error ?? exePathResult.warning ?? '✓ Path saved successfully'}
                 </p>
               )}
             </div>
 
             <div className="flex items-center justify-between">
-              <button onClick={() => setShowExeSetupModal(false)} className="text-[11px] font-semibold text-white/25 hover:text-white/50 transition-colors">
+              <button onClick={() => setShowExeSetupModal(false)} className="text-[12px] font-semibold text-white/25 hover:text-white/50 transition-colors">
                 Skip for now
               </button>
               <button
                 onClick={handleSaveExe}
                 disabled={savingExe || !exePathInput}
-                className="px-8 py-2.5 rounded-xl text-[12px] font-bold uppercase tracking-wider transition-all hover:-translate-y-px disabled:opacity-30"
+                className="px-8 py-2.5 rounded-xl text-[13px] font-bold uppercase tracking-wider transition-all hover:-translate-y-px disabled:opacity-30"
                 style={{ background: 'linear-gradient(135deg, #7046DA 0%, #2A175E 100%)', border: '2px solid rgba(181,121,255,0.35)', color: '#fff', boxShadow: '0 4px 12px rgba(112,70,218,0.3)' }}
               >
                 {savingExe ? 'Saving…' : 'Save & Continue'}
@@ -675,14 +671,14 @@ export default function App() {
             style={{ background: 'rgba(22,22,22,0.98)', outline: '1px solid rgba(255,255,255,0.1)', outlineOffset: '-1px', boxShadow: '0 20px 60px rgba(0,0,0,0.8)' }}
           >
             <div className="flex items-center justify-between mb-7">
-              <h2 className="gradient-title text-[1.1rem] font-bold uppercase tracking-[0.1em]">Settings</h2>
+              <h2 className="gradient-title text-[1.25rem] font-bold uppercase tracking-[0.1em]">Settings</h2>
               <button onClick={() => setShowSettings(false)} className="text-white/30 hover:text-white/70 transition-colors">
                 <X className="w-4 h-4" />
               </button>
             </div>
 
             <div className="mb-7">
-              <label className="block text-[11px] font-bold uppercase tracking-widest text-white/50 mb-3">
+              <label className="block text-[13px] font-bold uppercase tracking-widest text-white/50 mb-3">
                 Dead by Daylight Executable
               </label>
               <div className="flex gap-2 mb-2">
@@ -690,13 +686,13 @@ export default function App() {
                   value={exePathInput}
                   onChange={e => { setExePathInput(e.target.value); setExePathResult(null) }}
                   spellCheck={false}
-                  className="flex-1 px-4 py-2.5 rounded-xl text-[12px] font-mono text-white/80 outline-none"
+                  className="flex-1 px-4 py-2.5 rounded-xl text-[13px] font-mono text-white/80 outline-none"
                   style={{ background: 'rgba(255,255,255,0.06)', border: `1px solid ${exePathResult?.ok === false ? 'rgba(244,67,54,0.5)' : exePathResult?.ok ? 'rgba(68,255,65,0.35)' : 'rgba(255,255,255,0.12)'}` }}
                   placeholder="C:\...\DeadByDaylight-Win64-Shipping.exe"
                 />
                 <button
                   onClick={handleBrowseExe}
-                  className="flex items-center gap-1.5 px-3 py-2.5 rounded-xl text-[11px] font-bold uppercase tracking-wider transition-all hover:-translate-y-px"
+                  className="flex items-center gap-1.5 px-3 py-2.5 rounded-xl text-[12px] font-bold uppercase tracking-wider transition-all hover:-translate-y-px"
                   style={{ background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.15)', color: '#ccc' }}
                 >
                   <FolderOpen className="w-3.5 h-3.5" />
@@ -704,7 +700,7 @@ export default function App() {
                 </button>
               </div>
               {exePathResult && (
-                <p className="text-[11px] mt-1.5 leading-relaxed" style={{ color: exePathResult.ok ? (exePathResult.warning ? '#FF9800' : '#44FF41') : '#F44336' }}>
+                <p className="text-[12px] mt-1.5 leading-relaxed" style={{ color: exePathResult.ok ? (exePathResult.warning ? '#FF9800' : '#44FF41') : '#F44336' }}>
                   {exePathResult.error ?? exePathResult.warning ?? '✓ Path saved successfully'}
                 </p>
               )}
@@ -713,7 +709,7 @@ export default function App() {
             <div className="flex justify-end gap-3">
               <button
                 onClick={() => setShowSettings(false)}
-                className="px-6 py-2.5 rounded-xl text-[12px] font-bold uppercase tracking-wider transition-all hover:-translate-y-px"
+                className="px-6 py-2.5 rounded-xl text-[13px] font-bold uppercase tracking-wider transition-all hover:-translate-y-px"
                 style={{ background: 'rgba(255,255,255,0.05)', border: '2px solid rgba(255,255,255,0.15)', color: '#ccc' }}
               >
                 Close
@@ -721,7 +717,7 @@ export default function App() {
               <button
                 onClick={handleSaveExe}
                 disabled={savingExe}
-                className="px-8 py-2.5 rounded-xl text-[12px] font-bold uppercase tracking-wider transition-all hover:-translate-y-px disabled:opacity-30"
+                className="px-8 py-2.5 rounded-xl text-[13px] font-bold uppercase tracking-wider transition-all hover:-translate-y-px disabled:opacity-30"
                 style={{ background: 'linear-gradient(135deg, #7046DA 0%, #2A175E 100%)', border: '2px solid rgba(181,121,255,0.35)', color: '#fff', boxShadow: '0 4px 12px rgba(112,70,218,0.3)' }}
               >
                 {savingExe ? 'Saving...' : 'Save'}
