@@ -50,6 +50,8 @@ public static class WfpMgr {
     static Guid SUBLAYER = new Guid("dbd00001-dbd0-dbd0-dbd0-000000000001");
     // IP_REMOTE_ADDRESS field key on ALE_AUTH_CONNECT_V4
     static Guid FIELD_IP = new Guid("b235ae9a-1d64-49b8-a44c-5ff3d9095045");
+    // FWPM_CONDITION_IP_PROTOCOL — matches transport protocol (TCP=6, UDP=17)
+    static Guid FIELD_PROTO = new Guid("3971ef2b-623e-4f9a-8cb1-6e79b806b9a7");
     // FWPM_CONDITION_ALE_APP_ID — matches the originating process path
     static Guid FIELD_APP = new Guid("d78e1e87-8644-4ea5-9437-d809ecefc971");
 
@@ -137,8 +139,9 @@ public static class WfpMgr {
     }
 
     /// <summary>
-    /// Add a WFP block filter for the given CIDR.
-    /// If ntAppPath is non-null, the filter matches only traffic from that process.
+    /// Add a WFP block filter for the given CIDR (UDP-only).
+    /// Blocks only UDP traffic so that TCP backend/matchmaking connections
+    /// to the same IP ranges remain functional.
     ///
     /// FWPM_FILTER_CONDITION0 layout (40 bytes per condition, x64):
     ///   [0-15]  fieldKey (GUID)
@@ -152,7 +155,11 @@ public static class WfpMgr {
     ///   type  = FWP_V4_ADDR_MASK (0x100)
     ///   value = ptr to FWP_V4_ADDR_AND_MASK { uint addr; uint mask }
     ///
-    /// Condition 1 (optional) — originating process:
+    /// Condition 1 — protocol = UDP (17):
+    ///   type  = FWP_UINT8 (0)
+    ///   value = 17 (IPPROTO_UDP)
+    ///
+    /// Condition 2 (optional) — originating process:
     ///   type  = FWP_BYTE_BLOB_TYPE (12)
     ///   value = ptr to FWP_BYTE_BLOB { uint size; [4 pad]; BYTE* data }
     ///           where data = NT path as lowercase UTF-16LE with null terminator
@@ -166,7 +173,7 @@ public static class WfpMgr {
         uint mask = PrefixToMask(prefix);
 
         bool hasApp = !string.IsNullOrEmpty(ntAppPath);
-        int numConds = hasApp ? 2 : 1;
+        int numConds = hasApp ? 3 : 2;  // IP + protocol (+ app)
 
         // ── Condition 0: remote IP ────────────────────────────────────────────
 
@@ -175,7 +182,7 @@ public static class WfpMgr {
         W4(ms, 0, addr); W4(ms, 4, mask);
         GCHandle mh = GCHandle.Alloc(ms, GCHandleType.Pinned);
 
-        // ── Condition 1 (optional): process app-ID ───────────────────────────
+        // ── Condition 2 (optional): process app-ID ───────────────────────────
 
         // These are only allocated when hasApp is true; IsAllocated guards the Free() calls.
         GCHandle appPathHandle = default(GCHandle);
@@ -190,6 +197,12 @@ public static class WfpMgr {
         W4(conds, 24, 0x100);   // FWP_V4_ADDR_MASK
         WPtr(conds, 32, mh.AddrOfPinnedObject().ToInt64());
 
+        // Condition 1 — Protocol = UDP (17)
+        WG(conds, 40, FIELD_PROTO);
+        W4(conds, 56, 0);       // FWP_MATCH_EQUAL  (offset 40 + 16)
+        W4(conds, 64, 0);       // FWP_UINT8        (offset 40 + 24)
+        conds[72] = 17;         // IPPROTO_UDP      (offset 40 + 32)
+
         if (hasApp) {
             // NT path as UTF-16LE bytes with null terminator
             byte[] appPathBytes = System.Text.Encoding.Unicode.GetBytes(ntAppPath + "\0");
@@ -201,11 +214,11 @@ public static class WfpMgr {
             WPtr(blobBytes, 8, appPathHandle.AddrOfPinnedObject().ToInt64());
             blobHandle = GCHandle.Alloc(blobBytes, GCHandleType.Pinned);
 
-            // Condition 1 starts at offset 40
-            WG(conds, 40, FIELD_APP);
-            W4(conds, 56, 0);    // FWP_MATCH_EQUAL  (offset 40 + 16)
-            W4(conds, 64, 12);   // FWP_BYTE_BLOB_TYPE = 12  (offset 40 + 24)
-            WPtr(conds, 72, blobHandle.AddrOfPinnedObject().ToInt64()); // offset 40 + 32
+            // Condition 2 starts at offset 80
+            WG(conds, 80, FIELD_APP);
+            W4(conds, 96, 0);    // FWP_MATCH_EQUAL  (offset 80 + 16)
+            W4(conds, 104, 12);  // FWP_BYTE_BLOB_TYPE = 12  (offset 80 + 24)
+            WPtr(conds, 112, blobHandle.AddrOfPinnedObject().ToInt64()); // offset 80 + 32
         }
 
         GCHandle ch = GCHandle.Alloc(conds, GCHandleType.Pinned);
