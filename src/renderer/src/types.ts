@@ -130,6 +130,8 @@ export interface ElectronAPI {
   checkFirewallHealth: () => Promise<void>
   // Auto-update
   checkForUpdate: () => Promise<UpdateInfo>
+  downloadUpdate: () => Promise<void>
+  installUpdate:  () => Promise<void>
   // Server status (deadbyqueue)
   getServerStatus: () => Promise<ServerStatusResult>
   // Events
@@ -137,6 +139,8 @@ export interface ElectronAPI {
   onStatusChange:   (callback: (regionId: string, blocked: boolean) => void) => () => void
   onCidrCount:      (callback: (regionId: string, count: number) => void) => () => void
   onUnblockAllDone: (callback: () => void) => () => void
+  onUpdateDownloadProgress: (callback: (percent: number) => void) => () => void
+  onUpdateDownloaded: (callback: () => void) => () => void
 }
 
 declare global {

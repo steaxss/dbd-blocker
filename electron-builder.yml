@@ -1,0 +1,35 @@
+appId: com.steaxs.dbd-blocker
+productName: DBD Server Blocker
+directories:
+  buildResources: resources
+  output: dist
+
+extraResources:
+  - from: scripts
+    to: scripts
+    filter:
+      - "**/*.ps1"
+
+files:
+  - out/**/*
+  - "!out/**/*.map"
+
+nsis:
+  oneClick: false
+  perMachine: true
+  allowToChangeInstallationDirectory: true
+
+win:
+  target:
+    - target: nsis
+      arch: [x64]
+  icon: resources/icon.ico
+  requestedExecutionLevel: requireAdministrator
+
+publish:
+  provider: github
+  owner: steaxss
+  repo: dbd-blocker
+  releaseType: release
+
+forceCodeSigning: false

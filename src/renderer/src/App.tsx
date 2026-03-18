@@ -20,6 +20,11 @@ export default function App() {
     blockedCount,
     permanentRegions,
     updateInfo,
+    updateDownloading,
+    updateProgress,
+    updateReady,
+    downloadUpdate,
+    installUpdate,
     serverStatus,
     exePath,
     initDone,
@@ -147,17 +152,32 @@ export default function App() {
           <div className="flex items-center gap-2 text-[12px]" style={{ color: '#B579FF' }}>
             <Download className="w-3.5 h-3.5 shrink-0" />
             <span className="font-bold">v{updateInfo.version} available</span>
-            <span className="text-white/40 font-medium">— a new version of DBD Server Blocker is ready</span>
+            {updateDownloading ? (
+              <span className="text-white/40 font-medium">— downloading... {updateProgress}%</span>
+            ) : updateReady ? (
+              <span className="text-white/40 font-medium">— download complete, ready to install</span>
+            ) : (
+              <span className="text-white/40 font-medium">— a new version of DBD Server Blocker is ready</span>
+            )}
           </div>
-          <a
-            href={updateInfo.url}
-            target="_blank"
-            rel="noreferrer"
-            className="flex items-center gap-1.5 px-3 py-1 rounded-lg text-[11px] font-bold uppercase tracking-wider transition-all hover:-translate-y-px"
-            style={{ background: 'rgba(181,121,255,0.15)', border: '1px solid rgba(181,121,255,0.35)', color: '#B579FF' }}
-          >
-            Download
-          </a>
+          {updateReady ? (
+            <button
+              onClick={installUpdate}
+              className="flex items-center gap-1.5 px-3 py-1 rounded-lg text-[11px] font-bold uppercase tracking-wider transition-all hover:-translate-y-px"
+              style={{ background: 'rgba(68,255,65,0.15)', border: '1px solid rgba(68,255,65,0.35)', color: '#44FF41' }}
+            >
+              Install & Restart
+            </button>
+          ) : (
+            <button
+              onClick={downloadUpdate}
+              disabled={updateDownloading}
+              className="flex items-center gap-1.5 px-3 py-1 rounded-lg text-[11px] font-bold uppercase tracking-wider transition-all hover:-translate-y-px disabled:opacity-40"
+              style={{ background: 'rgba(181,121,255,0.15)', border: '1px solid rgba(181,121,255,0.35)', color: '#B579FF' }}
+            >
+              {updateDownloading ? `${updateProgress}%` : 'Download'}
+            </button>
+          )}
         </div>
       )}
 

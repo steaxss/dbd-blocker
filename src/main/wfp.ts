@@ -14,6 +14,7 @@ import { join } from 'path'
 import { app } from 'electron'
 import { existsSync } from 'fs'
 import { readFile, writeFile } from 'fs/promises'
+import { getScriptPath as resolveScript } from './paths'
 export type LogEmitter = (level: string, message: string) => void
 
 // ── State ─────────────────────────────────────────────────────────────────────
@@ -58,12 +59,12 @@ function getPsExe(): string {
   return existsSync(ps64) ? ps64 : 'powershell'
 }
 
-function getScriptPath(): string {
-  return join(app.getAppPath(), 'scripts', 'wfp-block.ps1')
+function getWfpScript(): string {
+  return resolveScript('wfp-block.ps1')
 }
 
 function runScript(args: string[]): Promise<{ ok: boolean; stdout: string; stderr: string }> {
-  return runPsFile(getScriptPath(), args)
+  return runPsFile(getWfpScript(), args)
 }
 
 export function runPsFile(scriptPath: string, args: string[]): Promise<{ ok: boolean; stdout: string; stderr: string }> {

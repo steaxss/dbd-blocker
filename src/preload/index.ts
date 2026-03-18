@@ -44,6 +44,8 @@ contextBridge.exposeInMainWorld('api', {
 
   // Auto-update
   checkForUpdate: () => ipcRenderer.invoke('check-for-update'),
+  downloadUpdate: () => ipcRenderer.invoke('download-update'),
+  installUpdate:  () => ipcRenderer.invoke('install-update'),
 
   // Server status (deadbyqueue)
   getServerStatus: () => ipcRenderer.invoke('get-server-status'),
@@ -75,5 +77,14 @@ contextBridge.exposeInMainWorld('api', {
     const handler = (_: unknown, result: unknown) => callback(result)
     ipcRenderer.on('udp-update', handler)
     return () => ipcRenderer.removeListener('udp-update', handler)
+  },
+  onUpdateDownloadProgress: (callback: (percent: number) => void) => {
+    const handler = (_: unknown, percent: number) => callback(percent)
+    ipcRenderer.on('update-download-progress', handler)
+    return () => ipcRenderer.removeListener('update-download-progress', handler)
+  },
+  onUpdateDownloaded: (callback: () => void) => {
+    ipcRenderer.on('update-downloaded', () => callback())
+    return () => ipcRenderer.removeAllListeners('update-downloaded')
   }
 })

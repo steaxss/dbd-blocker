@@ -197,6 +197,22 @@ app.whenReady().then(async () => {
 
   if (mainWindow) {
     registerIpcHandlers(mainWindow)
+
+    // Set up electron-updater event forwarding to renderer
+    const { autoUpdater } = await import('electron-updater')
+    autoUpdater.autoDownload = false
+    autoUpdater.autoInstallOnAppQuit = false
+
+    autoUpdater.on('download-progress', (progress) => {
+      if (!mainWindow?.isDestroyed()) {
+        mainWindow!.webContents.send('update-download-progress', progress.percent)
+      }
+    })
+    autoUpdater.on('update-downloaded', () => {
+      if (!mainWindow?.isDestroyed()) {
+        mainWindow!.webContents.send('update-downloaded')
+      }
+    })
   }
 
   const status = await getBlockedRegions(REGION_IDS)

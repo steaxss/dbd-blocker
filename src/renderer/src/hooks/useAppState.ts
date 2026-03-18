@@ -26,6 +26,9 @@ export function useAppState() {
   const [exePath, setExePathState]        = useState('')
   const [updateInfo, setUpdateInfo]       = useState<UpdateInfo | null>(null)
   const [serverStatus, setServerStatus]   = useState<ServerStatusMap>({})
+  const [updateDownloading, setUpdateDownloading] = useState(false)
+  const [updateProgress, setUpdateProgress]       = useState(0)
+  const [updateReady, setUpdateReady]             = useState(false)
 
   // Init / splash state
   const [initDone, setInitDone]     = useState(false)
@@ -227,11 +230,22 @@ export function useAppState() {
       addLog('success', 'All regions unblocked from tray')
     })
 
+    const unsubUpdateProgress = window.api.onUpdateDownloadProgress?.((percent) => {
+      setUpdateProgress(Math.round(percent))
+    })
+
+    const unsubUpdateDownloaded = window.api.onUpdateDownloaded?.(() => {
+      setUpdateDownloading(false)
+      setUpdateReady(true)
+    })
+
     return () => {
       unsubLog?.()
       unsubStatus?.()
       unsubCidr?.()
       unsubUnblockAll?.()
+      unsubUpdateProgress?.()
+      unsubUpdateDownloaded?.()
     }
   }, [addLog, syncBlockedCount])
 
@@ -359,6 +373,16 @@ export function useAppState() {
     addLog('info', 'Ping All complete')
   }, [setRegionStatus, addLog])
 
+  const downloadUpdate = useCallback(async () => {
+    setUpdateDownloading(true)
+    setUpdateProgress(0)
+    await window.api.downloadUpdate()
+  }, [])
+
+  const installUpdate = useCallback(() => {
+    window.api.installUpdate()
+  }, [])
+
   const clearLogs = useCallback(() => setLogs([]), [])
 
   const blockedCount = regions.filter((r) => r.status === 'blocked').length
@@ -371,6 +395,9 @@ export function useAppState() {
     blockedCount,
     permanentRegions,
     updateInfo,
+    updateDownloading,
+    updateProgress,
+    updateReady,
     serverStatus,
     exePath,
     initDone,
@@ -387,6 +414,8 @@ export function useAppState() {
     browseExe,
     pingRegion,
     pingAll,
+    downloadUpdate,
+    installUpdate,
     clearLogs
   }
 }

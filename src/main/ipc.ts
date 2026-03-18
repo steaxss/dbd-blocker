@@ -1,8 +1,8 @@
 import { ipcMain, BrowserWindow, dialog, app } from 'electron'
-import { join } from 'path'
 import { spawn, ChildProcess } from 'child_process'
 import { createInterface } from 'readline'
 import { existsSync } from 'fs'
+import { getScriptPath } from './paths'
 import {
   blockRegion,
   unblockRegion,
@@ -103,7 +103,7 @@ function getPsExe(): string {
 function startTracker(win: BrowserWindow, log: LogEmitter): void {
   if (trackerProc) return
 
-  const scriptPath = join(app.getAppPath(), 'scripts', 'etw-tracker.ps1')
+  const scriptPath = getScriptPath('etw-tracker.ps1')
   const proc = spawn(
     getPsExe(),
     ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', scriptPath],
@@ -321,8 +321,7 @@ export function registerIpcHandlers(win: BrowserWindow): void {
 
   // ── WFP health check — fire-and-forget, logs to console only ─────────────
   ipcMain.handle('check-firewall-health', () => {
-    const { join } = require('path')
-    checkFirewallHealth(log, join(app.getAppPath(), 'scripts', 'wfp-prereq.ps1'))
+    checkFirewallHealth(log, getScriptPath('wfp-prereq.ps1'))
   })
 
   // ── Admin check ────────────────────────────────────────────────────────────
@@ -502,39 +501,33 @@ export function registerIpcHandlers(win: BrowserWindow): void {
     }
   })
 
-  // ── Auto-update: check GitHub releases ─────────────────────────────────────
+  // ── Auto-update (electron-updater) ──────────────────────────────────────────
   ipcMain.handle('check-for-update', async () => {
+    const { autoUpdater } = await import('electron-updater')
     try {
-      const { default: https } = await import('https')
+      const result = await autoUpdater.checkForUpdates()
+      if (!result || !result.updateInfo) {
+        return { available: false, version: app.getVersion(), url: '' }
+      }
+      const latest = result.updateInfo.version
       const current = app.getVersion()
-
-      const data = await new Promise<string>((resolve, reject) => {
-        https.get(
-          `https://api.github.com/repos/${GITHUB_REPO}/releases/latest`,
-          { headers: { 'User-Agent': 'dbd-blocker' } },
-          (res) => {
-            let body = ''
-            res.on('data', (chunk) => (body += chunk))
-            res.on('end', () => resolve(body))
-          }
-        ).on('error', reject)
-      })
-
-      const release = JSON.parse(data) as { tag_name: string; prerelease: boolean; html_url: string }
-
-      if (release.prerelease) return { available: false, version: current, url: '' }
-
-      const latest = release.tag_name.replace(/^v/, '')
-
-      // Simple semver compare: split by dots and compare numerically
       const toNum = (v: string) => v.split('.').map(n => parseInt(n, 10) || 0)
       const [ca, cb, cc] = toNum(current)
       const [la, lb, lc] = toNum(latest)
       const newer = la > ca || (la === ca && lb > cb) || (la === ca && lb === cb && lc > cc)
-
-      return { available: newer, version: latest, url: release.html_url }
+      return { available: newer, version: latest, url: '' }
     } catch {
       return { available: false, version: app.getVersion(), url: '' }
     }
+  })
+
+  ipcMain.handle('download-update', async () => {
+    const { autoUpdater } = await import('electron-updater')
+    await autoUpdater.downloadUpdate()
+  })
+
+  ipcMain.handle('install-update', async () => {
+    const { autoUpdater } = await import('electron-updater')
+    autoUpdater.quitAndInstall(false, true)
   })
 }
