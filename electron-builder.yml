@@ -9,6 +9,8 @@ extraResources:
     to: scripts
     filter:
       - "**/*.ps1"
+  - from: resources/icon.png
+    to: icon.png
 
 files:
   - out/**/*
