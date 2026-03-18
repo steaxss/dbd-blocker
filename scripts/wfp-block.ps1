@@ -52,6 +52,8 @@ public static class WfpMgr {
     static Guid FIELD_IP = new Guid("b235ae9a-1d64-49b8-a44c-5ff3d9095045");
     // FWPM_CONDITION_IP_PROTOCOL — matches transport protocol (TCP=6, UDP=17)
     static Guid FIELD_PROTO = new Guid("3971ef2b-623e-4f9a-8cb1-6e79b806b9a7");
+    // FWPM_CONDITION_IP_REMOTE_PORT — matches destination port
+    static Guid FIELD_PORT = new Guid("3c13b880-40c3-4f55-965c-3dbf12d4cb3a");
     // FWPM_CONDITION_ALE_APP_ID — matches the originating process path
     static Guid FIELD_APP = new Guid("d78e1e87-8644-4ea5-9437-d809ecefc971");
 
@@ -139,9 +141,7 @@ public static class WfpMgr {
     }
 
     /// <summary>
-    /// Add a WFP block filter for the given CIDR (UDP-only).
-    /// Blocks only UDP traffic so that TCP backend/matchmaking connections
-    /// to the same IP ranges remain functional.
+    /// Add a WFP block filter for the given CIDR with protocol + optional port.
     ///
     /// FWPM_FILTER_CONDITION0 layout (40 bytes per condition, x64):
     ///   [0-15]  fieldKey (GUID)
@@ -151,20 +151,13 @@ public static class WfpMgr {
     ///   [28-31] pad
     ///   [32-39] conditionValue.value (pointer or 8-byte value)
     ///
-    /// Condition 0 — remote IP range:
-    ///   type  = FWP_V4_ADDR_MASK (0x100)
-    ///   value = ptr to FWP_V4_ADDR_AND_MASK { uint addr; uint mask }
-    ///
-    /// Condition 1 — protocol = UDP (17):
-    ///   type  = FWP_UINT8 (0)
-    ///   value = 17 (IPPROTO_UDP)
-    ///
-    /// Condition 2 (optional) — originating process:
-    ///   type  = FWP_BYTE_BLOB_TYPE (12)
-    ///   value = ptr to FWP_BYTE_BLOB { uint size; [4 pad]; BYTE* data }
-    ///           where data = NT path as lowercase UTF-16LE with null terminator
+    /// Conditions added (in order):
+    ///   0 — remote IP range  (FWP_V4_ADDR_MASK)
+    ///   1 — protocol         (FWP_UINT8: 6=TCP, 17=UDP)
+    ///   2 — remote port      (FWP_UINT16, only when port > 0)
+    ///   N — app-ID           (FWP_BYTE_BLOB, only when ntAppPath != null)
     /// </summary>
-    static ulong AddCidrFilter(IntPtr eng, string cidr, string ntAppPath) {
+    static ulong AddCidrFilter(IntPtr eng, string cidr, string ntAppPath, byte protocol, ushort port) {
         var slash = cidr.IndexOf('/');
         string ipStr = slash >= 0 ? cidr.Substring(0, slash) : cidr;
         int prefix   = slash >= 0 ? int.Parse(cidr.Substring(slash + 1)) : 32;
@@ -172,19 +165,17 @@ public static class WfpMgr {
         uint addr = IpToUint(ipStr);
         uint mask = PrefixToMask(prefix);
 
-        bool hasApp = !string.IsNullOrEmpty(ntAppPath);
-        int numConds = hasApp ? 3 : 2;  // IP + protocol (+ app)
+        bool hasApp  = !string.IsNullOrEmpty(ntAppPath);
+        bool hasPort = port > 0;
+        int numConds = 2 + (hasPort ? 1 : 0) + (hasApp ? 1 : 0);  // IP + proto + port? + app?
+        int nextSlot = 2;  // next condition slot index (0=IP, 1=proto)
 
         // ── Condition 0: remote IP ────────────────────────────────────────────
 
-        // FWP_V4_ADDR_AND_MASK struct: { uint addr; uint mask } = 8 bytes
         byte[] ms = new byte[8];
         W4(ms, 0, addr); W4(ms, 4, mask);
         GCHandle mh = GCHandle.Alloc(ms, GCHandleType.Pinned);
 
-        // ── Condition 2 (optional): process app-ID ───────────────────────────
-
-        // These are only allocated when hasApp is true; IsAllocated guards the Free() calls.
         GCHandle appPathHandle = default(GCHandle);
         GCHandle blobHandle    = default(GCHandle);
 
@@ -197,28 +188,39 @@ public static class WfpMgr {
         W4(conds, 24, 0x100);   // FWP_V4_ADDR_MASK
         WPtr(conds, 32, mh.AddrOfPinnedObject().ToInt64());
 
-        // Condition 1 — Protocol = UDP (17)
+        // Condition 1 — Protocol
         WG(conds, 40, FIELD_PROTO);
-        W4(conds, 56, 0);       // FWP_MATCH_EQUAL  (offset 40 + 16)
-        W4(conds, 64, 0);       // FWP_UINT8        (offset 40 + 24)
-        conds[72] = 17;         // IPPROTO_UDP      (offset 40 + 32)
+        W4(conds, 56, 0);             // FWP_MATCH_EQUAL
+        W4(conds, 64, 0);             // FWP_UINT8
+        conds[72] = protocol;
 
+        // Condition 2 (optional) — Remote port
+        if (hasPort) {
+            int off = nextSlot * 40;
+            WG(conds, off, FIELD_PORT);
+            W4(conds, off + 16, 0);    // FWP_MATCH_EQUAL
+            W4(conds, off + 24, 1);    // FWP_UINT16
+            // Store port as uint16 LE in the 8-byte value union
+            conds[off + 32] = (byte)(port & 0xFF);
+            conds[off + 33] = (byte)(port >> 8);
+            nextSlot++;
+        }
+
+        // Condition N (optional) — App-ID
         if (hasApp) {
-            // NT path as UTF-16LE bytes with null terminator
             byte[] appPathBytes = System.Text.Encoding.Unicode.GetBytes(ntAppPath + "\0");
             appPathHandle = GCHandle.Alloc(appPathBytes, GCHandleType.Pinned);
 
-            // FWP_BYTE_BLOB (x64): [0-3] size (UINT32), [4-7] pad, [8-15] *data (ptr)
             byte[] blobBytes = new byte[16];
             W4(blobBytes, 0, (uint)appPathBytes.Length);
             WPtr(blobBytes, 8, appPathHandle.AddrOfPinnedObject().ToInt64());
             blobHandle = GCHandle.Alloc(blobBytes, GCHandleType.Pinned);
 
-            // Condition 2 starts at offset 80
-            WG(conds, 80, FIELD_APP);
-            W4(conds, 96, 0);    // FWP_MATCH_EQUAL  (offset 80 + 16)
-            W4(conds, 104, 12);  // FWP_BYTE_BLOB_TYPE = 12  (offset 80 + 24)
-            WPtr(conds, 112, blobHandle.AddrOfPinnedObject().ToInt64()); // offset 80 + 32
+            int off = nextSlot * 40;
+            WG(conds, off, FIELD_APP);
+            W4(conds, off + 16, 0);    // FWP_MATCH_EQUAL
+            W4(conds, off + 24, 12);   // FWP_BYTE_BLOB_TYPE
+            WPtr(conds, off + 32, blobHandle.AddrOfPinnedObject().ToInt64());
         }
 
         GCHandle ch = GCHandle.Alloc(conds, GCHandleType.Pinned);
@@ -269,8 +271,11 @@ public static class WfpMgr {
     // ── Public API ────────────────────────────────────────────────────────────
 
     /// <summary>
-    /// Block a list of CIDRs. Returns JSON array of filter IDs.
-    /// If processPath (Win32) is non-empty, filters are scoped to that process only.
+    /// Block a list of CIDRs. Creates TWO filters per CIDR:
+    ///   1) UDP all-ports  — blocks game server connections
+    ///   2) TCP port 443   — blocks GameLift ping measurements so the
+    ///      matchmaker sees timeout/high latency for this region
+    /// Returns JSON array of all filter IDs.
     /// </summary>
     public static string Block(string cidrsJson, string processPath) {
         var cidrs = ParseStringArray(cidrsJson);
@@ -280,8 +285,10 @@ public static class WfpMgr {
         bool success = false;
         try {
             EnsureSublayer(eng);
-            foreach (var cidr in cidrs)
-                created.Add(AddCidrFilter(eng, cidr, ntAppPath));
+            foreach (var cidr in cidrs) {
+                created.Add(AddCidrFilter(eng, cidr, ntAppPath, 17, 0));    // UDP (game server)
+                created.Add(AddCidrFilter(eng, cidr, ntAppPath, 6, 443));   // TCP 443 (ping measurement)
+            }
             success = true;
             return "[" + string.Join(",", created) + "]";
         } finally {
