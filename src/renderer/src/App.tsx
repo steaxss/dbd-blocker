@@ -403,12 +403,7 @@ export default function App() {
       {/* Main content */}
       <div className="flex-1 overflow-hidden relative z-10" onClick={() => setHoveredChip(null)}>
         {view === 'connections' ? (
-          <ActiveConnections
-            onBlock={handleBlock}
-            onUnblock={unblockRegion}
-            permanentRegions={permanentRegions}
-            blockedRegions={regions.filter(r => r.status === 'blocked').map(r => r.id)}
-          />
+          <ActiveConnections />
         ) : view === 'map' ? (
           <MapView
             regions={regions}

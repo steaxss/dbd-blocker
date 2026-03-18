@@ -1,4 +1,8 @@
 import { ipcMain, BrowserWindow, dialog, app } from 'electron'
+import { join } from 'path'
+import { spawn, ChildProcess } from 'child_process'
+import { createInterface } from 'readline'
+import { existsSync } from 'fs'
 import {
   blockRegion,
   unblockRegion,
@@ -6,7 +10,6 @@ import {
   ruleExists,
   purgeAllWfp,
   checkFirewallHealth,
-  ps,
 } from './firewall'
 import { getCidrs, getCidrCounts, getCachedCidrs, fetchAndDiffCidrs } from './ips'
 import { REGION_IDS } from './index'
@@ -25,14 +28,161 @@ const GITHUB_REPO = 'steaxs/dbd-blocker'
 
 export type LogEmitter = (level: string, message: string) => void
 
-// ── UDP monitor state (persists across polls) ──────────────────────────────
-const WFP_GUID = '{0CCE9226-69AE-11D9-BED3-505054503030}'
-const udpMonitor = {
-  dbdRunning:       false,
-  auditWasEnabled:  false,
-  regionMap:        new Map<string, string>(), // ip → regionId
-  lastPollMs:       0,
-  loggedSecErr:     false,
+// ── ETW connection tracker (Microsoft-Windows-Kernel-Network) ──────────────
+interface TrackerOutput {
+  dbdRunning:     boolean
+  current_server: string | null
+  confidence:     number
+  candidates:     Array<{ ip: string; port: number; score: number; lastSeen: number; count: number }>
+  udpPorts:       number[]
+  dbdPid:         number
+  exitlagRunning: boolean
+  t:              number
+}
+
+interface TrackerResult {
+  dbdRunning:     boolean
+  current_server: string | null
+  currentRegion:  string | null
+  confidence:     number
+  candidates:     Array<{ ip: string; port: number; score: number; lastSeen: number; count: number; regionId: string | null }>
+  udpPorts:       number[]
+  dbdPid:         number
+  exitlagRunning: boolean
+}
+
+const EMPTY_RESULT: TrackerResult = {
+  dbdRunning: false, current_server: null, currentRegion: null,
+  confidence: 0, candidates: [], udpPorts: [], dbdPid: 0, exitlagRunning: false,
+}
+
+const trackerState = {
+  lastResult: EMPTY_RESULT as TrackerResult,
+}
+let trackerProc: ChildProcess | null = null
+
+// Cached CIDR data — refreshed every 60s so newly fetched ranges are picked up
+let cidrCache: Array<{ regionId: string; cidrs: string[] }> | null = null
+let cidrCacheTime = 0
+
+async function getRegionCidrs(): Promise<Array<{ regionId: string; cidrs: string[] }>> {
+  if (cidrCache && Date.now() - cidrCacheTime < 60_000) return cidrCache
+  const result: Array<{ regionId: string; cidrs: string[] }> = []
+  for (const regionId of REGION_IDS) {
+    const cidrs = await getCachedCidrs(regionId)
+    if (cidrs && cidrs.length > 0) result.push({ regionId, cidrs })
+  }
+  cidrCache = result
+  cidrCacheTime = Date.now()
+  return result
+}
+
+function ipToInt(ip: string): number {
+  return ip.split('.').reduce((acc, oct) => ((acc << 8) | parseInt(oct, 10)) >>> 0, 0)
+}
+function ipInCidr(ip: string, cidr: string): boolean {
+  const [network, bits] = cidr.split('/')
+  const prefix = parseInt(bits, 10)
+  if (prefix === 0) return true
+  const mask = (0xFFFFFFFF << (32 - prefix)) >>> 0
+  return (ipToInt(ip) & mask) === (ipToInt(network) & mask)
+}
+function matchRegion(ip: string, regionCidrs: Array<{ regionId: string; cidrs: string[] }>): string | null {
+  for (const { regionId, cidrs } of regionCidrs) {
+    for (const cidr of cidrs) {
+      if (ipInCidr(ip, cidr)) return regionId
+    }
+  }
+  return null
+}
+
+function getPsExe(): string {
+  const sysRoot = process.env.SystemRoot ?? 'C:\\Windows'
+  const ps64 = `${sysRoot}\\SysNative\\WindowsPowerShell\\v1.0\\powershell.exe`
+  return existsSync(ps64) ? ps64 : 'powershell'
+}
+
+function startTracker(win: BrowserWindow, log: LogEmitter): void {
+  if (trackerProc) return
+
+  const scriptPath = join(app.getAppPath(), 'scripts', 'etw-tracker.ps1')
+  const proc = spawn(
+    getPsExe(),
+    ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', scriptPath],
+    { windowsHide: true }
+  )
+  trackerProc = proc
+
+  log('info', '[Tracker] ETW session starting...')
+
+  const rl = createInterface({ input: proc.stdout! })
+  rl.on('line', async (line) => {
+    line = line.trim()
+    if (!line) return
+    try {
+      const data = JSON.parse(line) as TrackerOutput
+
+      if (!data.dbdRunning) {
+        trackerState.lastResult = { ...EMPTY_RESULT }
+        if (!win.isDestroyed()) win.webContents.send('udp-update', trackerState.lastResult)
+        return
+      }
+
+      const regionCidrs = await getRegionCidrs()
+
+      const candidates = (data.candidates ?? []).map(c => ({
+        ...c,
+        regionId: matchRegion(c.ip, regionCidrs),
+      }))
+
+      const currentRegion = data.current_server
+        ? matchRegion(data.current_server.split(':')[0], regionCidrs)
+        : null
+
+      const prev = trackerState.lastResult
+      trackerState.lastResult = {
+        dbdRunning:     true,
+        current_server: data.current_server ?? null,
+        currentRegion,
+        confidence:     data.confidence,
+        candidates,
+        udpPorts:       data.udpPorts ?? [],
+        dbdPid:         data.dbdPid,
+        exitlagRunning: data.exitlagRunning ?? false,
+      }
+
+      // Log game server region change
+      if (currentRegion && currentRegion !== prev.currentRegion) {
+        log('success', `[Tracker] Game server: ${currentRegion} (${data.current_server}) confidence=${Math.round(data.confidence * 100)}%`)
+      }
+      // Log ExitLag detection
+      if (data.exitlagRunning && !prev.exitlagRunning) {
+        log('warning', '[Tracker] ExitLag detected — game server detection may show relay IPs instead of actual server')
+      }
+
+      if (!win.isDestroyed()) win.webContents.send('udp-update', trackerState.lastResult)
+    } catch { /* ignore malformed JSON lines */ }
+  })
+
+  proc.stderr?.on('data', (d: Buffer) => {
+    for (const line of d.toString().split('\n')) {
+      const msg = line.trim()
+      if (msg) log('step', msg)
+    }
+  })
+
+  proc.on('close', (code) => {
+    trackerProc = null
+    log('warning', `[Tracker] Process exited (code=${code})`)
+  })
+}
+
+function stopTracker(log: LogEmitter): void {
+  if (trackerProc) {
+    trackerProc.kill()
+    trackerProc = null
+    log('info', '[Tracker] Stopped')
+  }
 }
 
 function makeLogEmitter(win: BrowserWindow): LogEmitter {
@@ -55,19 +205,37 @@ function sendStatus(win: BrowserWindow, regionId: string, blocked: boolean): voi
   }
 }
 
+/**
+ * Validates the configured DBD exe path.
+ * Returns the path string if valid, null if not (and logs an error).
+ * Applied as a guard before any block/unblock operation.
+ */
+async function requireValidExePath(log: LogEmitter): Promise<string | null> {
+  const path = await getExePath()
+  const validation = validateExePath(path)
+  if (!validation.ok) {
+    log('error', `DBD executable path is not configured or invalid — open Settings and set the correct path first. ${validation.error ?? ''}`.trim())
+    return null
+  }
+  return path
+}
+
 export function registerIpcHandlers(win: BrowserWindow): void {
   const log = makeLogEmitter(win)
 
   // ── Firewall: block one region ─────────────────────────────────────────────
   ipcMain.handle('block-region', async (_, regionId: string) => {
     try {
+      const exePath = await requireValidExePath(log)
+      if (!exePath) return { ok: false, error: 'DBD executable path not configured or invalid.' }
+
       log('info', `Blocking ${regionId}...`)
       const cidrs = await getCidrs(regionId)
       if (cidrs.length === 0) {
         log('warning', `${regionId}: no CIDRs available — run Refresh IPs first`)
         return { ok: false, error: 'No CIDRs available. Run Refresh IPs first.' }
       }
-      const result = await blockRegion(regionId, cidrs, log)
+      const result = await blockRegion(regionId, cidrs, log, exePath)
       sendStatus(win, regionId, result.ok)
       return result
     } catch (err) {
@@ -80,6 +248,9 @@ export function registerIpcHandlers(win: BrowserWindow): void {
   // ── Firewall: unblock one region ───────────────────────────────────────────
   ipcMain.handle('unblock-region', async (_, regionId: string) => {
     try {
+      const exePath = await requireValidExePath(log)
+      if (!exePath) return { ok: false, error: 'DBD executable path not configured or invalid.' }
+
       log('info', `Unblocking ${regionId}...`)
       const result = await unblockRegion(regionId, log)
       sendStatus(win, regionId, false)
@@ -93,6 +264,9 @@ export function registerIpcHandlers(win: BrowserWindow): void {
 
   // ── Firewall: unblock all (respects permanent regions) ────────────────────
   ipcMain.handle('unblock-all', async () => {
+    const exePath = await requireValidExePath(log)
+    if (!exePath) return
+
     log('info', 'Unblocking all regions...')
     for (const regionId of REGION_IDS) {
       try {
@@ -112,6 +286,9 @@ export function registerIpcHandlers(win: BrowserWindow): void {
 
   // ── Exclusive mode: block all except one region ───────────────────────────
   ipcMain.handle('block-except', async (_, keepRegionId: string) => {
+    const exePath = await requireValidExePath(log)
+    if (!exePath) return
+
     log('info', `Exclusive mode: keeping only ${keepRegionId} open...`)
     for (const regionId of REGION_IDS) {
       try {
@@ -127,7 +304,7 @@ export function registerIpcHandlers(win: BrowserWindow): void {
             log('warning', `${regionId}: skipped (no CIDRs)`)
             continue
           }
-          const result = await blockRegion(regionId, cidrs, log)
+          const result = await blockRegion(regionId, cidrs, log, exePath || undefined)
           sendStatus(win, regionId, result.ok)
         }
       } catch (err) {
@@ -272,155 +449,25 @@ export function registerIpcHandlers(win: BrowserWindow): void {
     return { ok: true, ip: host, ms: avg }
   })
 
-  // ── Get active DBD UDP connections (automatic, no user interaction) ────────
-  //
-  // Uses Windows Security Event 5156 (WFP ALE permit) which fires at the FIRST
-  // layer of the WFP stack — before any VPN/ExitLag/GPN redirect callout.
-  // GUID-based auditpol subcategory to work on any Windows locale.
-  //
-  ipcMain.handle('get-active-connections', async () => {
-    // 1. Find DBD PID
-    const pidRes = await ps(
-      `(Get-Process -Name 'DeadByDaylight-Win64-Shipping' -ErrorAction SilentlyContinue).Id`
-    )
-    const pid = parseInt(pidRes.stdout.trim(), 10)
-    const isRunning = !isNaN(pid) && pid > 0
+  // ── UDP tracker: returns last known state ──────────────────────────────────
+  ipcMain.handle('get-active-connections', () => trackerState.lastResult)
 
-    if (!isRunning) {
-      if (udpMonitor.dbdRunning) {
-        // DBD just stopped — restore audit state and clear accumulated data
-        udpMonitor.dbdRunning = false
-        udpMonitor.regionMap.clear()
-        if (!udpMonitor.auditWasEnabled) {
-          await ps(`auditpol /set /subcategory:"${WFP_GUID}" /success:disable`)
-          log('info', '[UDP] DBD stopped — WFP audit disabled')
-        } else {
-          log('info', '[UDP] DBD stopped — WFP audit preserved (was already active)')
-        }
-      }
-      return { running: false, udpRegions: [] }
-    }
-
-    // 2. DBD just started — enable audit monitoring
-    if (!udpMonitor.dbdRunning) {
-      udpMonitor.dbdRunning = true
-      udpMonitor.regionMap.clear()
-      log('info', `[UDP] DBD detected (PID: ${pid}) — configuring WFP audit...`)
-
-      // Check if WFP audit was already enabled (language-independent GUID)
-      const checkRes = await ps(
-        `((auditpol /get /subcategory:"${WFP_GUID}" 2>&1) -join ' ') -match 'Success'`
-      )
-      udpMonitor.auditWasEnabled = checkRes.stdout.trim().toLowerCase() === 'true'
-
-      if (!udpMonitor.auditWasEnabled) {
-        const enableRes = await ps(
-          `auditpol /set /subcategory:"${WFP_GUID}" /success:enable 2>&1`
-        )
-        if (enableRes.stdout.toLowerCase().includes('success') || enableRes.ok) {
-          log('info', '[UDP] WFP audit enabled — Security Event 5156 active')
-        } else {
-          log('warning', `[UDP] WFP audit enable failed: ${enableRes.stdout || enableRes.stderr}`)
-        }
-      } else {
-        log('info', '[UDP] WFP audit already active')
-      }
-
-      // On first poll look back 10s to catch connections made just before app opened
-      udpMonitor.lastPollMs = Date.now() - 10000
-    }
-
-    // 3. Query Security log for new 5156 UDP events from DBD since last poll
-    //    Properties: [0]=ProcessId [1]=Application [2]=Direction [3]=SrcAddr [4]=SrcPort
-    //                [5]=DestAddr [6]=DestPort [7]=Protocol (17=UDP)
-    const sinceMs = udpMonitor.lastPollMs - 1000 // 1s overlap to avoid missing events
-    udpMonitor.lastPollMs = Date.now()
-
-    const evtRes = await ps(
-      `$since = [DateTimeOffset]::FromUnixTimeMilliseconds(${sinceMs}).LocalDateTime; ` +
-      `$dbdPid = ${pid}; ` +
-      `$ips = [System.Collections.Generic.HashSet[string]]::new(); ` +
-      `$err = $null; ` +
-      `try { ` +
-        `Get-WinEvent -FilterHashtable @{ LogName='Security'; Id=5156; StartTime=$since } ` +
-        `-ErrorAction Stop | ` +
-        `Where-Object { [string]$_.Properties[0].Value -eq [string]$dbdPid -and $_.Properties[7].Value -eq 17 } | ` +
-        `ForEach-Object { ` +
-        `  $dst = [string]$_.Properties[5].Value; ` +
-        `  if ($dst -and $dst -notmatch '^(127\\.|10\\.|192\\.168\\.|172\\.(1[6-9]|2[0-9]|3[01])\\.|::1|0\\.0|255\\.|169\\.254\\.)') { ` +
-        `    [void]$ips.Add($dst) ` +
-        `  } ` +
-        `} ` +
-      `} catch { $err = $_.Exception.Message }; ` +
-      `$out = @{ ips = if ($ips.Count -gt 0) { [string[]]$ips } else { @() }; err = $err }; ` +
-      `$out | ConvertTo-Json -Compress`
-    )
-
-    // 4. Match new IPs against cached AWS CIDRs and accumulate
-    try {
-      const raw = JSON.parse(evtRes.stdout.trim()) as { ips: string[]; err: string | null }
-      const newIps: string[] = Array.isArray(raw.ips) ? raw.ips : []
-
-      // Surface Security log errors once per DBD session
-      if (raw.err && !udpMonitor.loggedSecErr) {
-        udpMonitor.loggedSecErr = true
-        // "No events found" is normal (no new connections), only log real errors
-        if (!raw.err.toLowerCase().includes('no events') && !raw.err.toLowerCase().includes('no matching')) {
-          log('warning', `[UDP] Security log: ${raw.err}`)
-        }
-      }
-      if (!raw.err) udpMonitor.loggedSecErr = false
-
-      if (newIps.length > 0) {
-        const regionCidrs: Array<{ regionId: string; cidrs: string[] }> = []
-        for (const regionId of REGION_IDS) {
-          const cidrs = await getCachedCidrs(regionId)
-          if (cidrs) regionCidrs.push({ regionId, cidrs })
-        }
-
-        function ipToInt(ip: string): number {
-          return ip.split('.').reduce((acc, oct) => ((acc << 8) | parseInt(oct, 10)) >>> 0, 0)
-        }
-        function ipInCidr(ip: string, cidr: string): boolean {
-          const [network, bits] = cidr.split('/')
-          const prefix = parseInt(bits, 10)
-          if (prefix === 0) return true
-          const mask = (0xFFFFFFFF << (32 - prefix)) >>> 0
-          return (ipToInt(ip) & mask) === (ipToInt(network) & mask)
-        }
-
-        for (const ip of newIps) {
-          if (udpMonitor.regionMap.has(ip)) continue
-          for (const { regionId, cidrs } of regionCidrs) {
-            let matched = false
-            for (const cidr of cidrs) {
-              if (ipInCidr(ip, cidr)) {
-              udpMonitor.regionMap.set(ip, regionId)
-              log('success', `[UDP] Game server detected: ${regionId} (${ip})`)
-              matched = true; break
-            }
-            }
-            if (matched) break
-          }
-        }
-      }
-    } catch { /* parse error */ }
-
-    // 5. Build unique-per-region list (first IP seen per region)
-    const regionToIp = new Map<string, string>()
-    for (const [ip, regionId] of udpMonitor.regionMap) {
-      if (!regionToIp.has(regionId)) regionToIp.set(regionId, ip)
-    }
-    const udpRegions = [...regionToIp.entries()].map(([regionId, ip]) => ({ regionId, ip }))
-
-    return { running: true, udpRegions }
-  })
-
-  // ── Reset UDP monitor (clear accumulated game servers) ─────────────────────
+  // ── Reset tracker — clears detected server without stopping tracker ────────
   ipcMain.handle('reset-udp-monitor', () => {
-    udpMonitor.regionMap.clear()
-    log('info', '[UDP] Game server list cleared')
+    trackerState.lastResult = {
+      ...trackerState.lastResult,
+      current_server: null,
+      currentRegion:  null,
+      confidence:     0,
+      candidates:     [],
+    }
+    if (!win.isDestroyed()) win.webContents.send('udp-update', trackerState.lastResult)
+    log('info', '[Tracker] Server cleared')
   })
+
+  // ── Manual start/stop (tracker is OFF by default, user enables it) ────────
+  ipcMain.handle('start-udp-tracker', () => startTracker(win, log))
+  ipcMain.handle('stop-udp-tracker',  () => stopTracker(log))
 
   // ── Settings: permanent regions ────────────────────────────────────────────
   ipcMain.handle('get-permanent-regions', async () => getPermanentRegions())

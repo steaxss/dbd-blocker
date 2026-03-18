@@ -63,10 +63,14 @@ function getScriptPath(): string {
 }
 
 function runScript(args: string[]): Promise<{ ok: boolean; stdout: string; stderr: string }> {
+  return runPsFile(getScriptPath(), args)
+}
+
+export function runPsFile(scriptPath: string, args: string[]): Promise<{ ok: boolean; stdout: string; stderr: string }> {
   return new Promise((resolve) => {
     const child = spawn(
       getPsExe(),
-      ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', getScriptPath(), ...args],
+      ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', scriptPath, ...args],
       { windowsHide: true }
     )
     let stdout = ''
@@ -97,7 +101,8 @@ export async function getBlockedMap(): Promise<Record<string, boolean>> {
 export async function wfpBlock(
   regionId: string,
   cidrs: string[],
-  log: LogEmitter
+  log: LogEmitter,
+  processPath?: string
 ): Promise<{ ok: boolean; error?: string }> {
   await loadState()
 
@@ -114,12 +119,13 @@ export async function wfpBlock(
     log('step', `[${regionId}] [1/3] OK (no stale filters)`)
   }
 
-  log('step', `[${regionId}] [2/3] Creating ${cidrs.length} WFP block filters...`)
+  const scopeLabel = processPath ? ' (DBD only)' : ''
+  log('step', `[${regionId}] [2/3] Creating ${cidrs.length} WFP block filters${scopeLabel}...`)
 
-  const res = await runScript([
-    '-Action', 'block',
-    '-CidrsJson', JSON.stringify(cidrs)
-  ])
+  const blockArgs = ['-Action', 'block', '-CidrsJson', JSON.stringify(cidrs)]
+  if (processPath) blockArgs.push('-ProcessPath', processPath)
+
+  const res = await runScript(blockArgs)
 
   if (!res.ok || !res.stdout.startsWith('[')) {
     const err = res.stderr || res.stdout || 'wfp-block.ps1 failed'

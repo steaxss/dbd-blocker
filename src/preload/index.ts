@@ -38,9 +38,11 @@ contextBridge.exposeInMainWorld('api', {
   // Ping
   pingRegion: (regionId: string) => ipcRenderer.invoke('ping-region', regionId),
 
-  // Active connections
+  // UDP tracker
   getActiveConnections: () => ipcRenderer.invoke('get-active-connections'),
   resetUdpMonitor:      () => ipcRenderer.invoke('reset-udp-monitor'),
+  startUdpTracker:      () => ipcRenderer.invoke('start-udp-tracker'),
+  stopUdpTracker:       () => ipcRenderer.invoke('stop-udp-tracker'),
 
   // WFP health check (fire-and-forget — logs to console)
   checkFirewallHealth: () => ipcRenderer.invoke('check-firewall-health'),
@@ -73,5 +75,10 @@ contextBridge.exposeInMainWorld('api', {
   onUnblockAllDone: (callback: () => void) => {
     ipcRenderer.on('unblock-all-done', callback)
     return () => ipcRenderer.removeListener('unblock-all-done', callback)
+  },
+  onUdpUpdate: (callback: (result: unknown) => void) => {
+    const handler = (_: unknown, result: unknown) => callback(result)
+    ipcRenderer.on('udp-update', handler)
+    return () => ipcRenderer.removeListener('udp-update', handler)
   }
 })

@@ -42,9 +42,10 @@ export async function ruleExists(regionId: string): Promise<boolean> {
 export async function blockRegion(
   regionId: string,
   cidrs: string[],
-  log: LogEmitter
+  log: LogEmitter,
+  processPath?: string
 ): Promise<{ ok: boolean; error?: string }> {
-  return wfpBlock(regionId, cidrs, log)
+  return wfpBlock(regionId, cidrs, log, processPath)
 }
 
 export async function unblockRegion(
