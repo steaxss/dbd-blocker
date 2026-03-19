@@ -503,7 +503,7 @@ export function registerIpcHandlers(win: BrowserWindow): void {
 
   // ── Auto-update (electron-updater) ──────────────────────────────────────────
   ipcMain.handle('check-for-update', async () => {
-    const { autoUpdater } = await import('electron-updater')
+    const _mod = await import('electron-updater'); const autoUpdater = _mod.autoUpdater ?? (_mod.default as any)?.autoUpdater
     try {
       const result = await autoUpdater.checkForUpdates()
       if (!result || !result.updateInfo) {
@@ -522,12 +522,12 @@ export function registerIpcHandlers(win: BrowserWindow): void {
   })
 
   ipcMain.handle('download-update', async () => {
-    const { autoUpdater } = await import('electron-updater')
+    const _mod = await import('electron-updater'); const autoUpdater = _mod.autoUpdater ?? (_mod.default as any)?.autoUpdater
     await autoUpdater.downloadUpdate()
   })
 
   ipcMain.handle('install-update', async () => {
-    const { autoUpdater } = await import('electron-updater')
+    const _mod = await import('electron-updater'); const autoUpdater = _mod.autoUpdater ?? (_mod.default as any)?.autoUpdater
     autoUpdater.quitAndInstall(false, true)
   })
 }

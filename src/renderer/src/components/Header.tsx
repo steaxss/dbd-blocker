@@ -11,7 +11,7 @@ export function Titlebar() {
     <div className="titlebar-drag flex items-center h-8 shrink-0 bg-[#0a0a0a] border-b border-white/[0.06] select-none">
       {/* App info */}
       <div className="flex items-center gap-2 pl-3 flex-1">
-        <img src="/icon.png" alt="" style={{ width: 18, height: 18, borderRadius: 4, flexShrink: 0 }} />
+        <img src="./icon.png" alt="" style={{ width: 18, height: 18, borderRadius: 4, flexShrink: 0 }} />
         <span className="gradient-title text-[14px] font-bold">DBD Blocker</span>
         <span className="text-[11px]" style={{ fontFamily: 'Inter, sans-serif', color: 'rgba(255,255,255,0.22)' }}>v1.0.0 · by Steaxs</span>
       </div>

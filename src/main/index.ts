@@ -81,10 +81,10 @@ function buildTrayMenu(): void {
   tray.setContextMenu(contextMenu)
 }
 
-function getIconPath(): string {
+function getIconPath(ext: 'png' | 'ico' = 'png'): string {
   return app.isPackaged
-    ? join(process.resourcesPath, 'icon.png')
-    : join(process.cwd(), 'resources/icon.png')
+    ? join(process.resourcesPath, `icon.${ext}`)
+    : join(process.cwd(), `resources/icon.${ext}`)
 }
 
 function createTray(): void {
@@ -110,7 +110,7 @@ function createWindow(): void {
     minHeight: 700,
     backgroundColor: '#09090b',
     frame: false,
-    icon: getIconPath(),
+    icon: getIconPath('ico'),
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
       contextIsolation: true,
@@ -137,12 +137,18 @@ function createWindow(): void {
 
     if (response === 1) {
       isQuitting = true
-      const { getPermanentRegions } = await import('./settings')
-      const permanent = await getPermanentRegions()
-      const protected_ = new Set(permanent)
-      const toUnblock = REGION_IDS.filter(id => !protected_.has(id))
-      await unblockAll(toUnblock, silentLog)
-      app.quit()
+      try {
+        const { getPermanentRegions } = await import('./settings')
+        const permanent = await getPermanentRegions()
+        const protected_ = new Set(permanent)
+        const toUnblock = REGION_IDS.filter(id => !protected_.has(id))
+        await unblockAll(toUnblock, silentLog)
+      } catch {
+        // Cleanup failed — exit anyway
+      }
+      mainWindow?.destroy()
+      mainWindow = null
+      app.exit(0)
     }
   })
 
@@ -199,7 +205,8 @@ app.whenReady().then(async () => {
     registerIpcHandlers(mainWindow)
 
     // Set up electron-updater event forwarding to renderer
-    const { autoUpdater } = await import('electron-updater')
+    const mod = await import('electron-updater')
+    const autoUpdater = mod.autoUpdater ?? (mod.default as any)?.autoUpdater
     autoUpdater.autoDownload = false
     autoUpdater.autoInstallOnAppQuit = false
 
@@ -221,13 +228,8 @@ app.whenReady().then(async () => {
   updateTrayTooltip()
 })
 
-app.on('before-quit', async () => {
+app.on('before-quit', () => {
   isQuitting = true
-  const { getPermanentRegions } = await import('./settings')
-  const permanent = await getPermanentRegions()
-  const protected_ = new Set(permanent)
-  const toUnblock = REGION_IDS.filter(id => !protected_.has(id))
-  await unblockAll(toUnblock, silentLog)
 })
 
 app.on('window-all-closed', () => {

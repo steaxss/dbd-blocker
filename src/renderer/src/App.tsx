@@ -447,6 +447,19 @@ export default function App() {
               </ul>
             </div>
 
+            {/* VPN note */}
+            <div className="mb-6 p-4 rounded-xl" style={{ background: 'rgba(181,121,255,0.06)', border: '1px solid rgba(181,121,255,0.18)' }}>
+              <p className="text-[13px] font-bold uppercase tracking-wider mb-2" style={{ color: '#B579FF' }}>
+                Want to force a specific region?
+              </p>
+              <p className="text-[13px] text-white/40 leading-relaxed">
+                This program can only <strong className="text-white/70">block</strong> regions — it cannot force you to connect to a specific one.
+                DBD's matchmaking automatically picks from the remaining unblocked regions, so there is no guarantee you will land on the one you want.
+                <br /><br />
+                To <strong className="text-white/70">force</strong> a specific region, you need to use a <strong className="text-white/70">VPN</strong> connected to that region. The VPN routes your traffic to the targeted server, ensuring your connection goes through it.
+              </p>
+            </div>
+
             {/* Don't show again + actions */}
             <div className="flex items-center justify-between gap-3">
               <label className="flex items-center gap-2 cursor-pointer select-none group">
