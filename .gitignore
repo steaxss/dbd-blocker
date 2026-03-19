@@ -2,3 +2,7 @@ node_modules/
 out/
 dist/
 .DS_Store
+
+# Claude
+.claude/
+CLAUDE.md
