@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { RefreshCw, ShieldOff, AlertTriangle, Settings, X, FolderOpen, LayoutGrid, Globe2, Wifi, Activity, Download } from 'lucide-react'
+import { RefreshCw, ShieldOff, AlertTriangle, Settings, X, FolderOpen, LayoutGrid, Globe2, Wifi, Activity, Download, MapPin } from 'lucide-react'
 import { useAppState } from './hooks/useAppState'
 import { Titlebar } from './components/Header'
 import { RegionGrid } from './components/RegionGrid'
@@ -25,6 +25,8 @@ export default function App() {
     updateReady,
     downloadUpdate,
     installUpdate,
+    matchmakingRegions,
+    userLocation,
     serverStatus,
     exePath,
     initDone,
@@ -352,6 +354,25 @@ export default function App() {
         </div>
       </div>
 
+      {/* Matchmaking region banner */}
+      {matchmakingRegions.length > 0 && (
+        <div
+          className="shrink-0 flex items-center justify-between px-6 py-1.5 relative z-20"
+          style={{ background: 'rgba(181,121,255,0.06)', borderBottom: '1px solid rgba(181,121,255,0.15)' }}
+        >
+          <div className="flex items-center gap-2 text-[11px]" style={{ color: '#B579FF' }}>
+            <MapPin className="w-3 h-3 shrink-0" />
+            <span className="font-semibold">Your matchmaking region</span>
+            <span className="text-white/30 font-medium">
+              — {matchmakingRegions.map(id => regions.find(r => r.id === id)?.name).filter(Boolean).join(', ')}
+            </span>
+          </div>
+          <span className="text-[10px] text-white/20 font-medium">
+            Detected via ping latency — no data is stored or sent to any server
+          </span>
+        </div>
+      )}
+
       {/* Main content */}
       <div className="flex-1 overflow-hidden relative z-10" onClick={() => setHoveredChip(null)}>
         {view === 'connections' ? (
@@ -360,6 +381,8 @@ export default function App() {
           <MapView
             regions={regions}
             permanentRegions={permanentRegions}
+            matchmakingRegions={matchmakingRegions}
+            userLocation={userLocation}
             serverStatus={serverStatus}
             onBlock={handleBlock}
             onUnblock={unblockRegion}
@@ -372,6 +395,7 @@ export default function App() {
               <RegionGrid
                 regions={regions}
                 permanentRegions={permanentRegions}
+                matchmakingRegions={matchmakingRegions}
                 serverStatus={serverStatus}
                 onBlock={handleBlock}
                 onUnblock={unblockRegion}

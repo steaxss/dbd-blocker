@@ -28,3 +28,54 @@ export const regionsByContinent = CONTINENTS.map((continent) => ({
   continent,
   regions: REGIONS.filter((r) => r.continent === continent)
 }))
+
+/** us-east-1 hosts DBD's backend services — blocking it breaks login/matchmaking entirely */
+export const BACKEND_REGION_ID = 'us-east-1'
+
+/** Haversine distance in km between two lat/lng points */
+function haversineKm(lat1: number, lng1: number, lat2: number, lng2: number): number {
+  const R = 6371
+  const dLat = ((lat2 - lat1) * Math.PI) / 180
+  const dLng = ((lng2 - lng1) * Math.PI) / 180
+  const a =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos((lat1 * Math.PI) / 180) * Math.cos((lat2 * Math.PI) / 180) * Math.sin(dLng / 2) ** 2
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a))
+}
+
+/**
+ * Given user coordinates, returns the IDs of regions in the user's matchmaking pool.
+ * Strategy: find the nearest region, then return all regions on the same continent.
+ */
+export function getMatchmakingRegionsByGeo(userLat: number, userLng: number): string[] {
+  let nearest = REGIONS[0]
+  let minDist = Infinity
+  for (const r of REGIONS) {
+    const d = haversineKm(userLat, userLng, r.lat, r.lng)
+    if (d < minDist) {
+      minDist = d
+      nearest = r
+    }
+  }
+  return REGIONS.filter((r) => r.continent === nearest.continent).map((r) => r.id)
+}
+
+/**
+ * Given a map of regionId → ping ms, returns the IDs of the user's matchmaking pool.
+ * Strategy: find the region with the lowest ping, then return all regions on the same continent.
+ * Regions with null/undefined ping are ignored.
+ */
+export function getMatchmakingRegionsByPing(pings: Record<string, number | null | undefined>): string[] | null {
+  let bestId: string | null = null
+  let bestMs = Infinity
+  for (const r of REGIONS) {
+    const ms = pings[r.id]
+    if (ms != null && ms < bestMs) {
+      bestMs = ms
+      bestId = r.id
+    }
+  }
+  if (!bestId) return null
+  const bestRegion = REGIONS.find((r) => r.id === bestId)!
+  return REGIONS.filter((r) => r.continent === bestRegion.continent).map((r) => r.id)
+}

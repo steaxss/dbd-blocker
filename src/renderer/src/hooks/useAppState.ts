@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
-import { REGIONS } from '../regions'
+import { REGIONS, getMatchmakingRegionsByGeo, getMatchmakingRegionsByPing } from '../regions'
 import type { RegionState, LogEntry, ExeValidationResult, InitStep, UpdateInfo, ServerStatusMap } from '../types'
 
 function makeId(): string {
@@ -29,6 +29,8 @@ export function useAppState() {
   const [updateDownloading, setUpdateDownloading] = useState(false)
   const [updateProgress, setUpdateProgress]       = useState(0)
   const [updateReady, setUpdateReady]             = useState(false)
+  const [matchmakingRegions, setMatchmakingRegions] = useState<string[]>([])
+  const [userLocation, setUserLocation] = useState<{ lat: number; lng: number } | null>(null)
 
   // Init / splash state
   const [initDone, setInitDone]     = useState(false)
@@ -173,20 +175,76 @@ export function useAppState() {
         if (res.ok) setServerStatus(res.data)
       }).catch(() => { /* ignore */ })
 
-      // Auto-ping all regions on startup (non-blocking)
+      // Step 1: Geolocation — browser API first (WiFi/network, precise), IP fallback
+      function applyGeo(lat: number, lng: number, source: string) {
+        setUserLocation({ lat, lng })
+        const mm = getMatchmakingRegionsByGeo(lat, lng)
+        setMatchmakingRegions(mm)
+        addLog('info', `Matchmaking region (${source}): ${mm.join(', ')}`)
+      }
+
+      if (navigator.geolocation) {
+        navigator.geolocation.getCurrentPosition(
+          (pos) => applyGeo(pos.coords.latitude, pos.coords.longitude, 'browser geolocation'),
+          () => {
+            // Browser geolocation denied/failed — fallback to IP
+            fetch('https://ipapi.co/json/')
+              .then(r => r.json())
+              .then((data: { latitude?: number; longitude?: number }) => {
+                if (data.latitude != null && data.longitude != null) {
+                  applyGeo(data.latitude, data.longitude, 'IP geolocation')
+                }
+              })
+              .catch(() => {
+                fetch('http://ip-api.com/json/?fields=lat,lon')
+                  .then(r => r.json())
+                  .then((data: { lat?: number; lon?: number }) => {
+                    if (data.lat != null && data.lon != null) {
+                      applyGeo(data.lat, data.lon, 'IP geolocation')
+                    }
+                  })
+                  .catch(() => { /* will rely on ping results instead */ })
+              })
+          },
+          { timeout: 5000, maximumAge: 300000 }
+        )
+      } else {
+        // No browser geolocation — IP fallback
+        fetch('https://ipapi.co/json/')
+          .then(r => r.json())
+          .then((data: { latitude?: number; longitude?: number }) => {
+            if (data.latitude != null && data.longitude != null) {
+              applyGeo(data.latitude, data.longitude, 'IP geolocation')
+            }
+          })
+          .catch(() => { /* will rely on ping results instead */ })
+      }
+
+      // Step 2: Auto-ping all regions, then refine matchmaking based on actual latency
       setRegions(prev => prev.map(r => ({ ...r, pingLoading: true, pingMs: undefined, pingIp: undefined })))
-      Promise.all(
+      const pingResults: Record<string, number | null> = {}
+      await Promise.all(
         REGIONS.map(async (r) => {
           const result = await window.api.pingRegion(r.id)
+          pingResults[r.id] = result.ms
           setRegionStatus(r.id, {
             pingLoading: false,
             pingMs: result.ms,
             pingIp: result.ip ?? undefined,
           })
         })
-      ).then(() => {
-        addLog('info', 'Ping auto-startup terminé')
-      }).catch(() => { /* ignore */ })
+      )
+      // Refine matchmaking using ping data (overrides geolocation if available)
+      const pingMm = getMatchmakingRegionsByPing(pingResults)
+      if (pingMm) {
+        setMatchmakingRegions(pingMm)
+        const bestId = Object.entries(pingResults)
+          .filter(([, ms]) => ms != null)
+          .sort(([, a], [, b]) => (a as number) - (b as number))[0]?.[0]
+        const bestMs = bestId ? pingResults[bestId] : null
+        addLog('success', `Matchmaking region (ping): ${pingMm.join(', ')} — lowest ping: ${bestMs}ms (${bestId})`)
+      }
+      addLog('info', 'Ping auto-startup complete')
     }
 
     init()
@@ -398,6 +456,8 @@ export function useAppState() {
     updateDownloading,
     updateProgress,
     updateReady,
+    matchmakingRegions,
+    userLocation,
     serverStatus,
     exePath,
     initDone,
