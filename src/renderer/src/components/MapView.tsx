@@ -107,6 +107,7 @@ export function MapView({
   const regionMap = useMemo(() => new Map(regions.map(r => [r.id, r])), [regions])
 
   const blockedCount  = regions.filter(r => r.status === 'blocked').length
+  const activeCount = regions.filter(r => r.status === 'active').length
   const selectedCount = selected.size
   // How many selected regions can actually be blocked (excludes backend)
   const blockableSelectedCount = [...selected].filter(id => id !== BACKEND_REGION_ID).length
@@ -555,7 +556,7 @@ export function MapView({
           <div className="text-[11px] text-white/35">
             <span style={{ color: '#F44336' }}>{blockedCount}</span> blocked
             {' · '}
-            <span style={{ color: '#44FF41' }}>{regions.length - blockedCount}</span> open
+            <span style={{ color: '#44FF41' }}>{activeCount}</span> open
           </div>
         </div>
 

@@ -1,6 +1,7 @@
 import { execFile, spawn } from 'child_process'
 import { promisify } from 'util'
 import {
+  type LogEmitter,
   isBlocked,
   getBlockedMap,
   wfpBlock,
@@ -9,11 +10,19 @@ import {
   wfpPurgeAll,
 } from './wfp'
 
-export type { LogEmitter } from './wfp'
+export interface FirewallActionResult {
+  ok: boolean
+  error?: string
+  code?: string
+}
+
+export interface FirewallHealthResult {
+  ok: boolean
+  details: string[]
+  error?: string
+}
 
 const execFileAsync = promisify(execFile)
-
-// ── PowerShell helper (still needed for UDP monitor in ipc.ts) ────────────────
 
 export async function ps(command: string): Promise<{ ok: boolean; stdout: string; stderr: string }> {
   try {
@@ -33,8 +42,6 @@ export async function ps(command: string): Promise<{ ok: boolean; stdout: string
   }
 }
 
-// ── WFP-backed firewall operations ────────────────────────────────────────────
-
 export async function ruleExists(regionId: string): Promise<boolean> {
   return isBlocked(regionId)
 }
@@ -44,14 +51,14 @@ export async function blockRegion(
   cidrs: string[],
   log: LogEmitter,
   processPath?: string
-): Promise<{ ok: boolean; error?: string }> {
+): Promise<FirewallActionResult> {
   return wfpBlock(regionId, cidrs, log, processPath)
 }
 
 export async function unblockRegion(
   regionId: string,
   log: LogEmitter
-): Promise<{ ok: boolean; error?: string }> {
+): Promise<FirewallActionResult> {
   return wfpUnblock(regionId, log)
 }
 
@@ -63,29 +70,51 @@ export async function purgeAllWfp(log: LogEmitter): Promise<void> {
   return wfpPurgeAll(log)
 }
 
-export function checkFirewallHealth(log: LogEmitter, scriptPath: string): void {
+export function checkFirewallHealth(log: LogEmitter, scriptPath: string): Promise<FirewallHealthResult> {
   const sysRoot = process.env.SystemRoot ?? 'C:\\Windows'
   const ps64 = `${sysRoot}\\SysNative\\WindowsPowerShell\\v1.0\\powershell.exe`
   const psExe = require('fs').existsSync(ps64) ? ps64 : 'powershell'
 
-  const child = spawn(psExe, [
-    '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', scriptPath
-  ], { windowsHide: true })
+  return new Promise((resolve) => {
+    const child = spawn(psExe, [
+      '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', scriptPath
+    ], { windowsHide: true })
 
-  const parseLine = (line: string) => {
-    const t = line.trim()
-    if (!t) return
-    const level =
-      t.includes('RESULT: FAIL') || t.startsWith('FAIL') ? 'warning' :
-      t.includes('RESULT: PASS') || t.startsWith('OK')   ? 'success' :
-      'step'
-    log(level, '[WFP] ' + t)
-  }
+    const details: string[] = []
+    let sawPass = false
+    let sawFail = false
 
-  child.stdout?.on('data', (d: Buffer) => d.toString().split('\n').forEach(parseLine))
-  child.stderr?.on('data', (d: Buffer) => d.toString().split('\n').forEach(l => {
-    if (l.trim()) log('warning', '[WFP] ' + l.trim())
-  }))
+    const parseLine = (line: string, fromStderr = false) => {
+      const t = line.trim()
+      if (!t) return
+      details.push(t)
+      const level =
+        t.includes('RESULT: FAIL') || t.startsWith('FAIL') || fromStderr ? 'warning' :
+        t.includes('RESULT: PASS') || t.startsWith('OK') ? 'success' :
+        'step'
+      if (t.includes('RESULT: PASS')) sawPass = true
+      if (t.includes('RESULT: FAIL') || t.startsWith('FAIL')) sawFail = true
+      log(level, '[WFP] ' + t)
+    }
+
+    child.stdout?.on('data', (d: Buffer) => d.toString().split('\n').forEach((line) => parseLine(line)))
+    child.stderr?.on('data', (d: Buffer) => d.toString().split('\n').forEach((line) => parseLine(line, true)))
+
+    child.on('close', (code) => {
+      const ok = code === 0 && sawPass && !sawFail
+      resolve({
+        ok,
+        details,
+        ...(ok ? {} : { error: details.at(-1) ?? `Health check failed (code=${code})` }),
+      })
+    })
+
+    child.on('error', (err) => {
+      const message = String(err)
+      log('warning', '[WFP] ' + message)
+      resolve({ ok: false, details, error: message })
+    })
+  })
 }
 
 export async function getBlockedRegions(regionIds: string[]): Promise<Record<string, boolean>> {

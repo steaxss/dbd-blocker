@@ -5,6 +5,10 @@ import { existsSync } from 'fs'
 import https from 'https'
 
 const AWS_URL = 'https://ip-ranges.amazonaws.com/ip-ranges.json'
+const FETCH_TIMEOUT_MS = 15_000
+
+type AwsPrefixEntry = { ip_prefix: string; region: string; service: string }
+type AwsIpRanges = { prefixes: AwsPrefixEntry[] }
 
 function getCacheDir(): string {
   return join(app.getPath('userData'), 'ips')
@@ -23,38 +27,54 @@ async function ensureCacheDir(): Promise<void> {
 
 function fetchJson(url: string): Promise<unknown> {
   return new Promise((resolve, reject) => {
-    https
-      .get(url, (res) => {
-        let data = ''
-        res.on('data', (chunk) => (data += chunk))
-        res.on('end', () => {
-          try {
-            resolve(JSON.parse(data))
-          } catch (e) {
-            reject(e)
-          }
-        })
+    const req = https.get(url, { timeout: FETCH_TIMEOUT_MS }, (res) => {
+      if ((res.statusCode ?? 0) < 200 || (res.statusCode ?? 0) >= 300) {
+        res.resume()
+        reject(new Error(`HTTP ${res.statusCode ?? 'unknown'} while fetching ${url}`))
+        return
+      }
+      let data = ''
+      res.on('data', (chunk) => (data += chunk))
+      res.on('end', () => {
+        try {
+          resolve(JSON.parse(data))
+        } catch (e) {
+          reject(e)
+        }
       })
-      .on('error', reject)
+    })
+    req.on('timeout', () => {
+      req.destroy(new Error(`Timeout while fetching ${url}`))
+    })
+    req.on('error', reject)
   })
 }
 
-export async function fetchRegionCidrs(regionId: string): Promise<string[]> {
-  const data = (await fetchJson(AWS_URL)) as {
-    prefixes: Array<{ ip_prefix: string; region: string; service: string }>
+async function fetchAwsRanges(): Promise<AwsIpRanges> {
+  const data = (await fetchJson(AWS_URL)) as AwsIpRanges
+  if (!Array.isArray(data.prefixes)) {
+    throw new Error('AWS IP ranges payload is invalid')
   }
+  return data
+}
 
+function extractRegionCidrs(data: AwsIpRanges, regionId: string): string[] {
   const cidrs = data.prefixes
     .filter(
       (entry) =>
         entry.region === regionId &&
         entry.ip_prefix &&
-        !entry.ip_prefix.includes(':') && // IPv4 only
-        entry.service === 'EC2'           // EC2 only — GameLift runs on EC2; S3/CF/Route53 not needed
+        !entry.ip_prefix.includes(':') &&
+        entry.service === 'EC2'
     )
     .map((entry) => entry.ip_prefix)
 
   return [...new Set(cidrs)].sort()
+}
+
+export async function fetchRegionCidrs(regionId: string): Promise<string[]> {
+  const data = await fetchAwsRanges()
+  return extractRegionCidrs(data, regionId)
 }
 
 export async function getCachedCidrs(regionId: string): Promise<string[] | null> {
@@ -88,17 +108,26 @@ export async function getCidrs(regionId: string, forceRefresh = false): Promise<
   return cidrs
 }
 
-export async function fetchAndDiffCidrs(
-  regionId: string
-): Promise<{ cidrs: string[]; added: number; removed: number }> {
-  const old = await getCachedCidrs(regionId)
-  const oldSet = new Set(old ?? [])
-  const cidrs = await fetchRegionCidrs(regionId)
-  await cacheCidrs(regionId, cidrs)
-  const newSet = new Set(cidrs)
-  const added = cidrs.filter((c) => !oldSet.has(c)).length
-  const removed = (old ?? []).filter((c) => !newSet.has(c)).length
-  return { cidrs, added, removed }
+export async function refreshAllCidrs(
+  regionIds: string[]
+): Promise<Record<string, { cidrs: string[]; added: number; removed: number }>> {
+  const data = await fetchAwsRanges()
+  const result: Record<string, { cidrs: string[]; added: number; removed: number }> = {}
+
+  for (const regionId of regionIds) {
+    const old = await getCachedCidrs(regionId)
+    const oldSet = new Set(old ?? [])
+    const cidrs = extractRegionCidrs(data, regionId)
+    await cacheCidrs(regionId, cidrs)
+    const newSet = new Set(cidrs)
+    result[regionId] = {
+      cidrs,
+      added: cidrs.filter((c) => !oldSet.has(c)).length,
+      removed: (old ?? []).filter((c) => !newSet.has(c)).length,
+    }
+  }
+
+  return result
 }
 
 export async function getCidrCounts(

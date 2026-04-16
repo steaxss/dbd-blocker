@@ -7,6 +7,9 @@
   "scripts": {
     "dev": "electron-vite dev",
     "build": "electron-vite build",
+    "typecheck": "tsc --noEmit -p tsconfig.web.json && tsc --noEmit -p tsconfig.node.json --moduleResolution node --module commonjs",
+    "lint": "npm run typecheck",
+    "test": "npm run typecheck && npm run build",
     "preview": "electron-vite preview",
     "dist": "cross-env OBFUSCATE=1 electron-vite build && electron-builder --win",
     "dist:publish": "cross-env OBFUSCATE=1 electron-vite build && electron-builder --win --publish always"

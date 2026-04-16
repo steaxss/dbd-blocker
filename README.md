@@ -1,24 +1,42 @@
 # DBD Server Blocker
 
-A lightweight Windows app to control which AWS regions Dead by Daylight can connect to. Block or allow specific server regions using Windows Firewall rules scoped to the game executable — no impact on the rest of your network.
+Windows desktop app for controlling which AWS regions `DeadByDaylight-Win64-Shipping.exe` can reach. It uses Windows Filtering Platform (WFP) filters scoped to the game executable, plus an ETW-based tracker for live server detection.
 
 <p align="center">
   <img src="resources/icon.png" alt="DBD Server Blocker" width="128">
 </p>
 
-## Features
+## Status
 
-- **Region blocking** — block/unblock individual AWS regions with one click
-- **Exclusive mode** — allow only one region, automatically block all others
-- **Permanent mode** — persist firewall rules across app restarts
-- **Live ping** — see real-time latency to each region
-- **Auto-update** — automatically fetches the latest AWS IP ranges on startup
-- **System tray** — runs quietly in the background with tray controls
-- **Lightweight** — targets only the DBD executable, no global firewall changes
+Current state: release candidate for manual Windows 11 use, not fully production-certified.
 
-## Download
+The app now builds cleanly, the WFP verification path is enforced, renderer-side failure handling is stronger, and the startup AWS refresh flow is safer. It is usable as an unsigned admin-only Windows tool, but I would still not label it "public production-grade" until it has been validated on real Windows 11 target machines across install, update, block, unblock, ETW tracking, and failure scenarios.
 
-Download the latest installer from the [Releases](../../releases) page and run it. The app will prompt for administrator privileges on launch (required for managing firewall rules).
+## What The App Does
+
+- Blocks or unblocks individual AWS regions for Dead by Daylight
+- Scopes firewall filters to `DeadByDaylight-Win64-Shipping.exe`
+- Persists selected blocked regions across restarts
+- Fetches AWS IPv4 ranges and caches them locally
+- Measures region latency from the app
+- Detects the live game server region via ETW UDP tracing once connected
+- Runs in the system tray and can clean up non-permanent rules on exit
+
+## Matchmaking Region Detection
+
+The app does not know the exact matchmaking region chosen by BHVR before a match starts.
+
+What it does today:
+
+- It estimates a likely matchmaking pool from browser geolocation or IP geolocation fallback
+- It then refines that estimate using ping latency to the known AWS/GameLift endpoints
+- The current logic picks the nearest or lowest-latency AWS region, then treats all regions on the same continent as the probable matchmaking pool
+
+What is exact:
+
+- Once DBD is connected, the ETW tracker can map the actual observed server IP to a known AWS region from the cached CIDR list
+
+So the pre-match signal is an estimate, while the in-match ETW signal is the real observed server region.
 
 ## Supported Regions
 
@@ -33,27 +51,62 @@ Download the latest installer from the [Releases](../../releases) page and run i
 | eu-west-1 | Dublin | sa-east-1 | Sao Paulo |
 | eu-west-2 | London | | |
 
-## How It Works
+`us-east-1` is treated specially because the app assumes Dead by Daylight backend services depend on it.
 
-The app fetches AWS IP ranges from the [official AWS endpoint](https://ip-ranges.amazonaws.com/ip-ranges.json), filters them by region, and creates outbound Windows Firewall rules targeting `DeadByDaylight-Win64-Shipping.exe`. Only traffic from the game is affected.
+## Architecture
 
-Rules are named `Block_DBD_{regionId}_{city}` (e.g. `Block_DBD_eu-west-1_Dublin`) for easy identification in Windows Firewall.
+- `src/main`: Electron main process, IPC, WFP/firewall integration, AWS IP fetch, settings, updater
+- `src/preload`: `window.api` bridge exposed to the renderer
+- `src/renderer`: React UI, map/grid views, logs, tracker UI, geolocation/ping logic
+- `scripts`: PowerShell scripts for WFP direct API access and ETW tracking
+
+## Current Validation
+
+The following checks pass locally:
+
+- `npm run typecheck`
+- `npm run build`
+- `npm run test`
+
+`npm run test` is currently a validation alias for type-check + build. There is still no dedicated automated runtime test suite.
 
 ## Requirements
 
-- Windows 10 / 11
+- Windows 10 or Windows 11
 - Administrator privileges
+- Dead by Daylight installed locally
+- PowerShell available
+
+## Packaging Notes
+
+- The app is intentionally unsigned
+- Administrator rights are required at runtime for WFP operations
+- The NSIS installer is configured for per-user install, but the application itself still requests elevation
+
+## Remaining Gaps Before Broad Public Distribution
+
+- No real automated runtime tests on Windows networking behavior
+- No CI pipeline proving packaging and smoke-test stability
+- Geolocation still depends on third-party services from the renderer
+- The app still needs real-machine validation for WFP failure, ETW tracker edge cases, and packaged update flow
 
 ## Development
 
 ```bash
 npm install
-npm run dev       # start in dev mode
-npm run build     # build (no packaging)
-npm run dist      # build + package installer
+npm run dev
+npm run typecheck
+npm run build
+npm run dist
 ```
 
-Built with Electron, React, TypeScript, and Tailwind CSS.
+## Practical Verdict
+
+If the question is "can I keep using this on my own Windows 11 machine and package it as an unsigned admin tool?", the answer is yes.
+
+If the question is "can I guarantee public production readiness with no surprises yet?", the answer is still no.
+
+The next step is not more architecture work. It is a Windows 11 validation pass on the packaged `.exe` covering install, first launch, WFP failure, region block/unblock, ETW detection, exit cleanup, and update behavior.
 
 ## License
 
