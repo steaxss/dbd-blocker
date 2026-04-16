@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { RefreshCw, ShieldOff, AlertTriangle, Settings, X, FolderOpen, LayoutGrid, Globe2, Wifi, Activity, Download } from 'lucide-react'
+import { RefreshCw, ShieldOff, AlertTriangle, Settings, X, FolderOpen, LayoutGrid, Globe2, Wifi, Activity, Download, MapPin } from 'lucide-react'
 import { useAppState } from './hooks/useAppState'
 import { Titlebar } from './components/Header'
 import { RegionGrid } from './components/RegionGrid'
@@ -25,8 +25,12 @@ export default function App() {
     updateReady,
     downloadUpdate,
     installUpdate,
+    matchmakingRegions,
+    userLocation,
     serverStatus,
     exePath,
+    wfpHealth,
+    criticalError,
     initDone,
     initSteps,
     needsExeSetup,
@@ -41,10 +45,12 @@ export default function App() {
     browseExe,
     pingRegion,
     pingAll,
-    clearLogs
+    clearLogs,
+    recheckFirewallHealth
   } = useAppState()
 
-  const activeCount = regions.length - blockedCount
+  const activeCount = regions.filter((region) => region.status === 'active').length
+  const actionsLocked = Boolean(criticalError)
 
   // View: grid | map | connections
   const [view, setView] = useState<'grid' | 'map' | 'connections'>('grid')
@@ -96,6 +102,7 @@ export default function App() {
   }
 
   function handleBlock(regionId: string) {
+    if (actionsLocked) return
     withBlockWarning(() => blockRegion(regionId))
   }
 
@@ -318,7 +325,7 @@ export default function App() {
             {/* Refresh IPs with cooldown */}
             <button
               onClick={refreshIps}
-              disabled={globalLoading || refreshCooldown > 0}
+              disabled={actionsLocked || globalLoading || refreshCooldown > 0}
               className="flex items-center gap-1.5 px-4 py-1.5 rounded-[10px] text-[13px] font-bold uppercase tracking-[0.08em] transition-all duration-200 disabled:opacity-30 hover:-translate-y-px"
               style={{ background: 'rgba(255,255,255,0.05)', border: '2px solid rgba(255,255,255,0.15)', color: '#ccc' }}
               title={refreshCooldown > 0 ? `Refresh available in ${refreshCooldown}s` : 'Refresh AWS IP ranges'}
@@ -330,7 +337,7 @@ export default function App() {
             {/* Ping All */}
             <button
               onClick={pingAll}
-              disabled={globalLoading}
+              disabled={actionsLocked || globalLoading}
               className="flex items-center gap-1.5 px-4 py-1.5 rounded-[10px] text-[13px] font-bold uppercase tracking-[0.08em] transition-all duration-200 disabled:opacity-30 hover:-translate-y-px"
               style={{ background: 'rgba(255,255,255,0.05)', border: '2px solid rgba(255,255,255,0.15)', color: '#ccc' }}
               title="Test ping on all servers"
@@ -341,7 +348,7 @@ export default function App() {
 
             <button
               onClick={unblockAll}
-              disabled={globalLoading || blockedCount === 0}
+              disabled={actionsLocked || globalLoading || blockedCount === 0}
               className="flex items-center gap-1.5 px-4 py-1.5 rounded-[10px] text-[13px] font-bold uppercase tracking-[0.08em] transition-all duration-200 disabled:opacity-30 hover:-translate-y-px"
               style={{ background: 'rgba(255,255,255,0.05)', border: '2px solid rgba(255,255,255,0.15)', color: '#ccc' }}
             >
@@ -352,6 +359,25 @@ export default function App() {
         </div>
       </div>
 
+      {/* Matchmaking region banner */}
+      {matchmakingRegions.length > 0 && (
+        <div
+          className="shrink-0 flex items-center justify-between px-6 py-1.5 relative z-20"
+          style={{ background: 'rgba(181,121,255,0.06)', borderBottom: '1px solid rgba(181,121,255,0.15)' }}
+        >
+          <div className="flex items-center gap-2 text-[11px]" style={{ color: '#B579FF' }}>
+            <MapPin className="w-3 h-3 shrink-0" />
+            <span className="font-semibold">Your matchmaking region</span>
+            <span className="text-white/30 font-medium">
+              — {matchmakingRegions.map(id => regions.find(r => r.id === id)?.name).filter(Boolean).join(', ')}
+            </span>
+          </div>
+          <span className="text-[10px] text-white/20 font-medium">
+            Detected via ping latency — no data is stored or sent to any server
+          </span>
+        </div>
+      )}
+
       {/* Main content */}
       <div className="flex-1 overflow-hidden relative z-10" onClick={() => setHoveredChip(null)}>
         {view === 'connections' ? (
@@ -360,6 +386,8 @@ export default function App() {
           <MapView
             regions={regions}
             permanentRegions={permanentRegions}
+            matchmakingRegions={matchmakingRegions}
+            userLocation={userLocation}
             serverStatus={serverStatus}
             onBlock={handleBlock}
             onUnblock={unblockRegion}
@@ -372,6 +400,7 @@ export default function App() {
               <RegionGrid
                 regions={regions}
                 permanentRegions={permanentRegions}
+                matchmakingRegions={matchmakingRegions}
                 serverStatus={serverStatus}
                 onBlock={handleBlock}
                 onUnblock={unblockRegion}
@@ -648,6 +677,75 @@ export default function App() {
                 style={{ background: 'linear-gradient(135deg, #7046DA 0%, #2A175E 100%)', border: '2px solid rgba(181,121,255,0.35)', color: '#fff', boxShadow: '0 4px 12px rgba(112,70,218,0.3)' }}
               >
                 {savingExe ? 'Saving...' : 'Save'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {criticalError && !showSplash && (
+        <div
+          className="fixed inset-0 z-[120] flex items-center justify-center"
+          style={{ background: 'rgba(0,0,0,0.86)', backdropFilter: 'blur(10px)' }}
+        >
+          <div
+            className="w-[620px] rounded-2xl p-8"
+            style={{ background: 'rgba(18,18,18,0.99)', outline: '1px solid rgba(244,67,54,0.22)', outlineOffset: '-1px', boxShadow: '0 24px 80px rgba(0,0,0,0.9)' }}
+          >
+            <div className="flex items-start gap-4 mb-6">
+              <div
+                className="w-11 h-11 rounded-xl shrink-0 flex items-center justify-center"
+                style={{ background: 'rgba(244,67,54,0.12)', border: '1px solid rgba(244,67,54,0.28)' }}
+              >
+                <AlertTriangle className="w-5 h-5" style={{ color: '#F44336' }} />
+              </div>
+              <div>
+                <h2 className="text-[1.2rem] font-bold text-white mb-1">Windows Filtering Platform unavailable</h2>
+                <p className="text-[13px] text-white/40 leading-relaxed">
+                  Blocking is disabled until the WFP health check passes again. The app is locked to prevent false success states.
+                </p>
+              </div>
+            </div>
+
+            <div
+              className="mb-5 rounded-xl p-4"
+              style={{ background: 'rgba(244,67,54,0.07)', border: '1px solid rgba(244,67,54,0.18)' }}
+            >
+              <p className="text-[13px] font-semibold leading-relaxed" style={{ color: '#F44336' }}>
+                {criticalError}
+              </p>
+            </div>
+
+            {wfpHealth?.details && wfpHealth.details.length > 0 && (
+              <div
+                className="mb-6 rounded-xl p-4"
+                style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)' }}
+              >
+                <p className="text-[11px] font-bold uppercase tracking-wider text-white/30 mb-3">Latest health output</p>
+                <div className="space-y-1.5">
+                  {wfpHealth.details.slice(-5).map((line, index) => (
+                    <div key={`${index}-${line}`} className="text-[12px] font-mono text-white/45 break-all">
+                      {line}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            <div className="flex items-center justify-end gap-3">
+              <button
+                onClick={() => window.api.win.close()}
+                className="px-6 py-2.5 rounded-xl text-[13px] font-bold uppercase tracking-wider transition-all hover:-translate-y-px"
+                style={{ background: 'rgba(255,255,255,0.05)', border: '2px solid rgba(255,255,255,0.12)', color: '#ccc' }}
+              >
+                Exit
+              </button>
+              <button
+                onClick={recheckFirewallHealth}
+                className="px-8 py-2.5 rounded-xl text-[13px] font-bold uppercase tracking-wider transition-all hover:-translate-y-px"
+                style={{ background: 'linear-gradient(135deg, #F44336 0%, #C62828 100%)', border: '2px solid rgba(244,67,54,0.4)', color: '#fff', boxShadow: '0 4px 12px rgba(244,67,54,0.35)' }}
+              >
+                Re-check WFP
               </button>
             </div>
           </div>

@@ -1,5 +1,11 @@
 import { contextBridge, ipcRenderer } from 'electron'
-import type { LogEntry } from '../renderer/src/types'
+
+type LogEntry = {
+  id: string
+  timestamp: string
+  level: string
+  message: string
+}
 
 contextBridge.exposeInMainWorld('api', {
   // Window controls

@@ -1,9 +1,20 @@
 import 'leaflet/dist/leaflet.css'
 import { useState, useMemo, useCallback, useRef, useEffect } from 'react'
-import { MapContainer, TileLayer, Marker, Popup, useMapEvents } from 'react-leaflet'
+import { MapContainer, TileLayer, Marker, Popup, Circle, useMapEvents } from 'react-leaflet'
 import L from 'leaflet'
 import { Shield, ShieldOff, MousePointerClick, Wifi } from 'lucide-react'
-import { REGIONS, regionsByContinent } from '../regions'
+import { REGIONS, regionsByContinent, BACKEND_REGION_ID } from '../regions'
+
+/** Haversine distance in meters */
+function haversineMeters(lat1: number, lng1: number, lat2: number, lng2: number): number {
+  const R = 6_371_000
+  const dLat = ((lat2 - lat1) * Math.PI) / 180
+  const dLng = ((lng2 - lng1) * Math.PI) / 180
+  const a =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos((lat1 * Math.PI) / 180) * Math.cos((lat2 * Math.PI) / 180) * Math.sin(dLng / 2) ** 2
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a))
+}
 import { FlagIcon } from './FlagIcon'
 import type { RegionState, ServerStatusMap } from '../types'
 
@@ -50,6 +61,8 @@ function makeIcon(status: string, isPermanent: boolean, isSelected: boolean, isG
 interface MapViewProps {
   regions:              RegionState[]
   permanentRegions:     string[]
+  matchmakingRegions:   string[]
+  userLocation:         { lat: number; lng: number } | null
   serverStatus:         ServerStatusMap
   onBlock:              (id: string) => void
   onUnblock:            (id: string) => void
@@ -60,6 +73,8 @@ interface MapViewProps {
 export function MapView({
   regions,
   permanentRegions,
+  matchmakingRegions,
+  userLocation,
   serverStatus,
   onBlock,
   onUnblock,
@@ -92,10 +107,14 @@ export function MapView({
   const regionMap = useMemo(() => new Map(regions.map(r => [r.id, r])), [regions])
 
   const blockedCount  = regions.filter(r => r.status === 'blocked').length
+  const activeCount = regions.filter(r => r.status === 'active').length
   const selectedCount = selected.size
+  // How many selected regions can actually be blocked (excludes backend)
+  const blockableSelectedCount = [...selected].filter(id => id !== BACKEND_REGION_ID).length
 
   function handleBlockSelected() {
     for (const id of selected) {
+      if (id === BACKEND_REGION_ID) continue
       const r = regionMap.get(id)
       if (r && r.status !== 'blocked' && r.status !== 'loading') onBlock(id)
     }
@@ -152,6 +171,47 @@ export function MapView({
           />
           <MapEvents onInteract={() => setHoveredRegion(null)} />
 
+          {/* User location marker */}
+          {userLocation && (
+            <Marker
+              position={[userLocation.lat, userLocation.lng]}
+              icon={L.divIcon({
+                html: `<div style="width:10px;height:10px;border-radius:50%;background:#B579FF;border:2px solid rgba(255,255,255,0.8);box-shadow:0 0 12px rgba(181,121,255,0.9), 0 0 0 4px rgba(181,121,255,0.2);cursor:default"></div>`,
+                className: '',
+                iconSize: [10, 10],
+                iconAnchor: [5, 5],
+                tooltipAnchor: [8, 0],
+              })}
+              interactive={false}
+            />
+          )}
+
+          {/* Matchmaking area circle */}
+          {userLocation && matchmakingRegions.length > 0 && (() => {
+            const mmRegionDefs = REGIONS.filter(r => matchmakingRegions.includes(r.id))
+            let maxDist = 0
+            for (const r of mmRegionDefs) {
+              const d = haversineMeters(userLocation.lat, userLocation.lng, r.lat, r.lng)
+              if (d > maxDist) maxDist = d
+            }
+            // Add 15% padding so dots sit inside the circle, minimum 500km
+            const radius = Math.max(maxDist * 1.15, 500_000)
+            return (
+              <Circle
+                center={[userLocation.lat, userLocation.lng]}
+                radius={radius}
+                pathOptions={{
+                  color: '#B579FF',
+                  weight: 1.5,
+                  opacity: 0.5,
+                  fillColor: '#B579FF',
+                  fillOpacity: 0.06,
+                  dashArray: '6 4',
+                }}
+              />
+            )
+          })()}
+
           {REGIONS.map(region => {
             const state    = regionMap.get(region.id)
             if (!state) return null
@@ -189,8 +249,15 @@ export function MapView({
                   <Popup autoPan={false} minWidth={230} maxWidth={290}>
                     <div style={{ padding: '14px 16px 12px', fontFamily: 'Poppins, sans-serif' }}>
                       {/* Server ID */}
-                      <div style={{ fontFamily: 'Poppins, sans-serif', fontSize: 10, fontWeight: 800, color: 'rgba(181,121,255,0.9)', textTransform: 'uppercase', letterSpacing: '0.12em', marginBottom: 8 }}>
-                        {region.id}
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 8 }}>
+                        <span style={{ fontFamily: 'Poppins, sans-serif', fontSize: 10, fontWeight: 800, color: 'rgba(181,121,255,0.9)', textTransform: 'uppercase', letterSpacing: '0.12em' }}>
+                          {region.id}
+                        </span>
+                        {region.id === BACKEND_REGION_ID && (
+                          <span style={{ fontSize: 8, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em', padding: '1px 5px', borderRadius: 3, background: 'rgba(255,255,255,0.06)', color: 'rgba(255,255,255,0.35)', border: '1px solid rgba(255,255,255,0.1)' }}>
+                            Backend
+                          </span>
+                        )}
                       </div>
 
                       {/* Flag + city + country */}
@@ -278,6 +345,18 @@ export function MapView({
                           >
                             Unblock
                           </button>
+                        ) : region.id === BACKEND_REGION_ID ? (
+                          <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 4 }}>
+                            <button
+                              disabled
+                              style={{ width: '100%', padding: '6px 0', borderRadius: 8, border: '1px solid rgba(255,255,255,0.06)', background: 'rgba(255,255,255,0.03)', color: 'rgba(255,255,255,0.2)', fontSize: 10, fontWeight: 700, fontFamily: 'Poppins, sans-serif', textTransform: 'uppercase', letterSpacing: '0.08em', cursor: 'not-allowed', opacity: 0.5, pointerEvents: 'none' as const }}
+                            >
+                              Block
+                            </button>
+                            <span style={{ fontSize: 9, color: 'rgba(255,255,255,0.3)', fontFamily: 'Inter, sans-serif', lineHeight: 1.3 }}>
+                              DBD backend server — blocking it would break login &amp; matchmaking.
+                            </span>
+                          </div>
                         ) : (
                           <button
                             onClick={() => { onBlock(region.id) }}
@@ -437,6 +516,19 @@ export function MapView({
               <span className="text-[10px] font-semibold text-white/50 uppercase tracking-wider">{label}</span>
             </div>
           ))}
+          {userLocation && matchmakingRegions.length > 0 && (
+            <>
+              <div className="w-full h-px my-1" style={{ background: 'rgba(255,255,255,0.06)' }} />
+              <div className="flex items-center gap-2">
+                <div className="w-2.5 h-2.5 rounded-full shrink-0" style={{ background: '#B579FF', border: '1.5px solid rgba(255,255,255,0.8)', boxShadow: '0 0 6px rgba(181,121,255,0.9)' }} />
+                <span className="text-[10px] font-semibold text-white/50 uppercase tracking-wider">You</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <div className="w-2.5 h-2.5 rounded shrink-0" style={{ border: '1.5px dashed rgba(181,121,255,0.5)', background: 'rgba(181,121,255,0.1)' }} />
+                <span className="text-[10px] font-semibold text-white/50 uppercase tracking-wider">Matchmaking</span>
+              </div>
+            </>
+          )}
         </div>
 
         {/* Click hint */}
@@ -464,7 +556,7 @@ export function MapView({
           <div className="text-[11px] text-white/35">
             <span style={{ color: '#F44336' }}>{blockedCount}</span> blocked
             {' · '}
-            <span style={{ color: '#44FF41' }}>{regions.length - blockedCount}</span> open
+            <span style={{ color: '#44FF41' }}>{activeCount}</span> open
           </div>
         </div>
 
@@ -553,8 +645,18 @@ export function MapView({
 
                     {/* Name + id */}
                     <div className="flex-1 min-w-0">
-                      <div className="text-[11px] font-bold text-white/75 truncate uppercase tracking-wide">
-                        {region.name}
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-[11px] font-bold text-white/75 truncate uppercase tracking-wide">
+                          {region.name}
+                        </span>
+                        {region.id === BACKEND_REGION_ID && (
+                          <span
+                            className="text-[7px] font-bold uppercase tracking-wider px-1 py-px rounded shrink-0"
+                            style={{ background: 'rgba(255,255,255,0.06)', color: 'rgba(255,255,255,0.3)', border: '1px solid rgba(255,255,255,0.08)' }}
+                          >
+                            Backend
+                          </span>
+                        )}
                       </div>
                       <div className="text-[9px] font-bold text-white/22 uppercase tracking-wider truncate">
                         {region.id}
@@ -602,17 +704,17 @@ export function MapView({
         >
           <button
             onClick={handleBlockSelected}
-            disabled={selectedCount === 0 || globalLoading}
+            disabled={blockableSelectedCount === 0 || globalLoading}
             className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl text-[11px] font-bold uppercase tracking-widest transition-all duration-150 disabled:opacity-25"
             style={{
               background: 'linear-gradient(135deg, #F44336 0%, #C62828 100%)',
               color:      '#fff',
               border:     '1px solid rgba(244,67,54,0.35)',
-              boxShadow:  selectedCount > 0 ? '0 4px 12px rgba(244,67,54,0.25)' : 'none',
+              boxShadow:  blockableSelectedCount > 0 ? '0 4px 12px rgba(244,67,54,0.25)' : 'none',
             }}
           >
             <Shield className="w-3.5 h-3.5" />
-            Block{selectedCount > 0 ? ` (${selectedCount})` : ''}
+            Block{blockableSelectedCount > 0 ? ` (${blockableSelectedCount})` : ''}
           </button>
 
           <button

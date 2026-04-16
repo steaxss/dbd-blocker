@@ -43,6 +43,12 @@ export interface ExeValidationResult {
   warning?: string
 }
 
+export interface ActionResult {
+  ok: boolean
+  error?: string
+  code?: string
+}
+
 export interface PingResult {
   ok: boolean
   ip: string | null
@@ -92,6 +98,12 @@ export interface ServerStatusResult {
   data: ServerStatusMap
 }
 
+export interface FirewallHealthResult {
+  ok: boolean
+  details: string[]
+  error?: string
+}
+
 export interface ElectronAPI {
   win: {
     minimize:    () => void
@@ -100,9 +112,9 @@ export interface ElectronAPI {
     isMaximized: () => Promise<boolean>
   }
   // Firewall
-  blockRegion:   (regionId: string) => Promise<{ ok: boolean; error?: string }>
-  unblockRegion: (regionId: string) => Promise<{ ok: boolean; error?: string }>
-  unblockAll:    () => Promise<void>
+  blockRegion:   (regionId: string) => Promise<ActionResult>
+  unblockRegion: (regionId: string) => Promise<ActionResult>
+  unblockAll:    () => Promise<ActionResult>
   getStatus:     () => Promise<Record<string, boolean>>
   getCidrCounts: () => Promise<Record<string, number>>
   refreshIps:    () => Promise<{ added: number; removed: number }>
@@ -127,7 +139,7 @@ export interface ElectronAPI {
   stopUdpTracker:       () => Promise<void>
   onUdpUpdate: (callback: (result: TrackerResult) => void) => () => void
   // WFP health check (console only)
-  checkFirewallHealth: () => Promise<void>
+  checkFirewallHealth: () => Promise<FirewallHealthResult>
   // Auto-update
   checkForUpdate: () => Promise<UpdateInfo>
   downloadUpdate: () => Promise<void>

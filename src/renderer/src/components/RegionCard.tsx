@@ -6,6 +6,8 @@ import type { RegionState, ServerInfo } from '../types'
 interface RegionCardProps {
   region: RegionState
   isPermanent: boolean
+  isBackend: boolean
+  isMatchmaking: boolean
   serverInfo?: ServerInfo
   onBlock: () => void
   onUnblock: () => void
@@ -17,6 +19,8 @@ interface RegionCardProps {
 export function RegionCard({
   region,
   isPermanent,
+  isBackend,
+  isMatchmaking,
   serverInfo,
   onBlock,
   onUnblock,
@@ -85,6 +89,13 @@ export function RegionCard({
         outlineOffset: '-1px',
         boxShadow:     '0 8px 32px rgba(0,0,0,0.5)',
       }
+    : isMatchmaking && !isBackend
+    ? {
+        background:    'rgba(181, 121, 255, 0.06)',
+        outline:       '1px solid rgba(181, 121, 255, 0.25)',
+        outlineOffset: '-1px',
+        boxShadow:     '0 8px 32px rgba(0,0,0,0.5)',
+      }
     : {
         background:    'rgba(255, 255, 255, 0.03)',
         outline:       '1px solid rgba(255, 255, 255, 0.10)',
@@ -106,6 +117,26 @@ export function RegionCard({
         />
 
         <div className="flex items-center gap-1.5">
+          {/* Backend badge */}
+          {isBackend && (
+            <span
+              className="text-[9px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded"
+              style={{ background: 'rgba(255,255,255,0.06)', color: 'rgba(255,255,255,0.35)', border: '1px solid rgba(255,255,255,0.12)' }}
+            >
+              BACKEND
+            </span>
+          )}
+
+          {/* Matchmaking badge */}
+          {isMatchmaking && !isBackend && (
+            <span
+              className="text-[9px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded"
+              style={{ background: 'rgba(181,121,255,0.15)', color: '#B579FF', border: '1px solid rgba(181,121,255,0.3)' }}
+            >
+              YOUR REGION
+            </span>
+          )}
+
           {/* Permanent badge */}
           {isPermanent && isBlocked && (
             <span
@@ -251,6 +282,34 @@ export function RegionCard({
             <ShieldOff className="w-4 h-4" />
             Unblock
           </button>
+        ) : isBackend ? (
+          <div className="relative group/backend">
+            <button
+              disabled
+              className="w-full flex items-center justify-center gap-2 py-3.5 rounded-xl text-[13px] font-bold uppercase tracking-widest cursor-not-allowed opacity-35"
+              style={{
+                background: 'rgba(255,255,255,0.04)',
+                border: '1px solid rgba(255,255,255,0.08)',
+                color: 'rgba(255,255,255,0.4)',
+              }}
+            >
+              <Shield className="w-4 h-4" />
+              Block
+            </button>
+            <div
+              className="pointer-events-none absolute left-1/2 -translate-x-1/2 bottom-full mb-2 opacity-0 group-hover/backend:opacity-100 transition-opacity duration-150 w-[220px] px-3 py-2 rounded-lg text-center"
+              style={{
+                background: 'rgba(12,12,12,0.95)',
+                border: '1px solid rgba(255,255,255,0.12)',
+                color: 'rgba(255,255,255,0.7)',
+                boxShadow: '0 4px 12px rgba(0,0,0,0.5)',
+              }}
+            >
+              <p className="text-[11px] font-semibold leading-relaxed">
+                This is the DBD backend server. Blocking it would prevent the game from connecting entirely (login, matchmaking, etc.).
+              </p>
+            </div>
+          </div>
         ) : (
           <button
             onClick={onBlock}
@@ -281,24 +340,39 @@ export function RegionCard({
               Remove Permanent
             </button>
           ) : (
-            <button
-              onClick={onMarkPermanent}
-              className="mt-2 w-full flex items-center justify-center gap-1.5 py-2 rounded-xl text-[12px] font-semibold uppercase tracking-wider transition-colors duration-200"
-              style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.1)', color: 'rgba(255,255,255,0.35)' }}
-              onMouseEnter={e => {
-                e.currentTarget.style.background = 'rgba(255,152,0,0.08)'
-                e.currentTarget.style.color = '#FF9800'
-                e.currentTarget.style.borderColor = 'rgba(255,152,0,0.25)'
-              }}
-              onMouseLeave={e => {
-                e.currentTarget.style.background = 'rgba(255,255,255,0.04)'
-                e.currentTarget.style.color = 'rgba(255,255,255,0.35)'
-                e.currentTarget.style.borderColor = 'rgba(255,255,255,0.1)'
-              }}
-            >
-              <Lock className="w-3 h-3" />
-              Make Permanent
-            </button>
+            <div className="relative group/perm mt-2">
+              <button
+                onClick={onMarkPermanent}
+                className="w-full flex items-center justify-center gap-1.5 py-2 rounded-xl text-[12px] font-semibold uppercase tracking-wider transition-colors duration-200"
+                style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.1)', color: 'rgba(255,255,255,0.35)' }}
+                onMouseEnter={e => {
+                  e.currentTarget.style.background = 'rgba(255,152,0,0.08)'
+                  e.currentTarget.style.color = '#FF9800'
+                  e.currentTarget.style.borderColor = 'rgba(255,152,0,0.25)'
+                }}
+                onMouseLeave={e => {
+                  e.currentTarget.style.background = 'rgba(255,255,255,0.04)'
+                  e.currentTarget.style.color = 'rgba(255,255,255,0.35)'
+                  e.currentTarget.style.borderColor = 'rgba(255,255,255,0.1)'
+                }}
+              >
+                <Lock className="w-3 h-3" />
+                Make Permanent
+              </button>
+              <div
+                className="pointer-events-none absolute left-1/2 -translate-x-1/2 bottom-full mb-2 opacity-0 group-hover/perm:opacity-100 transition-opacity duration-150 w-[240px] px-3 py-2 rounded-lg text-center"
+                style={{
+                  background: 'rgba(12,12,12,0.95)',
+                  border: '1px solid rgba(255,152,0,0.2)',
+                  color: 'rgba(255,255,255,0.7)',
+                  boxShadow: '0 4px 12px rgba(0,0,0,0.5)',
+                }}
+              >
+                <p className="text-[11px] font-semibold leading-relaxed">
+                  The block will stay active even after closing the application. The firewall rule will persist until you manually remove it.
+                </p>
+              </div>
+            </div>
           )
         )}
 

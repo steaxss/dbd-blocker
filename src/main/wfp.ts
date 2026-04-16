@@ -2,7 +2,7 @@
  * WFP (Windows Filtering Platform) direct API manager.
  *
  * Delegates to scripts/wfp-block.ps1 (embedded C# via Add-Type).
- * Maintains a state map (regionId → WFP filter IDs) persisted to
+ * Maintains a state map (regionId -> WFP filter IDs) persisted to
  * userData/wfp-state.json so filters can be cleaned up across restarts.
  *
  * All WFP filters are created with FWPM_FILTER_FLAG_PERSISTENT so they
@@ -15,11 +15,10 @@ import { app } from 'electron'
 import { existsSync } from 'fs'
 import { readFile, writeFile } from 'fs/promises'
 import { getScriptPath as resolveScript } from './paths'
+
 export type LogEmitter = (level: string, message: string) => void
 
-// ── State ─────────────────────────────────────────────────────────────────────
-
-// regionId → WFP filter IDs (stored as strings: ulong can exceed JS safe integer)
+// regionId -> WFP filter IDs (stored as strings: ulong can exceed JS safe integer)
 const blockedState = new Map<string, string[]>()
 let stateLoaded = false
 
@@ -39,7 +38,7 @@ async function loadState(): Promise<void> {
       if (Array.isArray(v) && v.length > 0) blockedState.set(k, v)
     }
   } catch {
-    // corrupt/missing state — start fresh
+    // corrupt/missing state -> start fresh
   }
 }
 
@@ -48,10 +47,10 @@ async function saveState(): Promise<void> {
     const data: Record<string, string[]> = {}
     for (const [k, v] of blockedState) data[k] = v
     await writeFile(statePath(), JSON.stringify(data), 'utf-8')
-  } catch { /* ignore */ }
+  } catch {
+    // ignore persistence failures
+  }
 }
-
-// ── PowerShell subprocess ─────────────────────────────────────────────────────
 
 function getPsExe(): string {
   const sysRoot = process.env.SystemRoot ?? 'C:\\Windows'
@@ -83,8 +82,6 @@ export function runPsFile(scriptPath: string, args: string[]): Promise<{ ok: boo
   })
 }
 
-// ── Public API ────────────────────────────────────────────────────────────────
-
 export async function isBlocked(regionId: string): Promise<boolean> {
   await loadState()
   return blockedState.has(regionId)
@@ -104,10 +101,9 @@ export async function wfpBlock(
   cidrs: string[],
   log: LogEmitter,
   processPath?: string
-): Promise<{ ok: boolean; error?: string }> {
+): Promise<{ ok: boolean; error?: string; code?: string }> {
   await loadState()
 
-  // Remove any stale filters for this region first
   if (blockedState.has(regionId)) {
     const old = blockedState.get(regionId)!
     if (old.length > 0) {
@@ -127,11 +123,10 @@ export async function wfpBlock(
   if (processPath) blockArgs.push('-ProcessPath', processPath)
 
   const res = await runScript(blockArgs)
-
   if (!res.ok || !res.stdout.startsWith('[')) {
     const err = res.stderr || res.stdout || 'wfp-block.ps1 failed'
-    log('error', `[${regionId}] [2/3] FAILED — ${err}`)
-    return { ok: false, error: err }
+    log('error', `[${regionId}] [2/3] FAILED -> ${err}`)
+    return { ok: false, error: err, code: 'wfp_block_failed' }
   }
 
   let filterIds: string[]
@@ -139,21 +134,32 @@ export async function wfpBlock(
     filterIds = JSON.parse(res.stdout) as string[]
   } catch {
     const err = `Cannot parse filter IDs: ${res.stdout}`
-    log('error', `[${regionId}] [2/3] FAILED — ${err}`)
-    return { ok: false, error: err }
+    log('error', `[${regionId}] [2/3] FAILED -> ${err}`)
+    return { ok: false, error: err, code: 'wfp_parse_failed' }
+  }
+
+  if (filterIds.length === 0) {
+    const err = 'WFP created no filters'
+    log('error', `[${regionId}] [2/3] FAILED -> ${err}`)
+    return { ok: false, error: err, code: 'wfp_empty_filters' }
+  }
+
+  log('step', `[${regionId}] [3/3] Verifying WFP filter is active...`)
+  const spotCheck = await runScript(['-Action', 'check', '-FilterIdsJson', JSON.stringify([filterIds[0]])])
+  if (spotCheck.stdout.trim() !== 'true') {
+    await runScript(['-Action', 'unblock', '-FilterIdsJson', JSON.stringify(filterIds)])
+    blockedState.delete(regionId)
+    await saveState()
+    const err = 'WFP verification failed. Blocking has been rolled back.'
+    log('error', `[${regionId}] [3/3] FAILED -> ${err}`)
+    return { ok: false, error: err, code: 'wfp_verification_failed' }
   }
 
   blockedState.set(regionId, filterIds.map(String))
   await saveState()
 
-  log('step', `[${regionId}] [3/3] Verifying WFP filter is active...`)
-  const spotCheck = await runScript(['-Action', 'check', '-FilterIdsJson', JSON.stringify([filterIds[0]])])
-  if (spotCheck.stdout.trim() === 'true') {
-    const partial = filterIds.length !== cidrs.length ? ` (partial: ${filterIds.length}/${cidrs.length} CIDRs)` : ''
-    log('success', `[${regionId}] Block confirmed — ${filterIds.length} WFP filter${filterIds.length !== 1 ? 's' : ''} active${partial}. Restart your game for changes to take effect.`)
-  } else {
-    log('warning', `[${regionId}] WFP filters created but verification failed — ensure the app runs as Administrator.`)
-  }
+  const partial = filterIds.length !== cidrs.length ? ` (partial: ${filterIds.length}/${cidrs.length} CIDRs)` : ''
+  log('success', `[${regionId}] Block confirmed -> ${filterIds.length} WFP filter${filterIds.length !== 1 ? 's' : ''} active${partial}. Restart your game for changes to take effect.`)
   return { ok: true }
 }
 
@@ -178,13 +184,13 @@ export async function wfpUnblock(
 
   if (!res.ok) {
     const err = res.stderr || 'wfp-block.ps1 unblock failed'
-    log('error', `[${regionId}] [1/2] FAILED — ${err}`)
+    log('error', `[${regionId}] [1/2] FAILED -> ${err}`)
     return { ok: false, error: err }
   }
 
   const psResult = res.stdout.trim()
   if (psResult === 'false') {
-    log('warning', `[${regionId}] [1/2] WFP delete returned false — some filters may remain`)
+    log('warning', `[${regionId}] [1/2] WFP delete returned false -> some filters may remain`)
   }
 
   blockedState.delete(regionId)
@@ -196,7 +202,7 @@ export async function wfpUnblock(
 }
 
 export async function wfpPurgeAll(log: LogEmitter): Promise<void> {
-  log('step', 'WFP purge — enumerating orphaned filters...')
+  log('step', 'WFP purge -> enumerating orphaned filters...')
   const res = await runScript(['-Action', 'purge'])
   if (!res.ok) {
     log('warning', `WFP purge script error: ${res.stderr || res.stdout}`)
@@ -206,7 +212,7 @@ export async function wfpPurgeAll(log: LogEmitter): Promise<void> {
   blockedState.clear()
   await saveState()
   if (count === -1) {
-    log('warning', 'WFP purge: FwpmFilterCreateEnumHandle0 failed — run as Administrator')
+    log('warning', 'WFP purge: FwpmFilterCreateEnumHandle0 failed -> run as Administrator')
   } else if (count === 0) {
     log('info', 'WFP purge: no orphaned filters found')
   } else {
@@ -230,7 +236,7 @@ export async function wfpUnblockMany(regionIds: string[], log: LogEmitter): Prom
 
   if (toDelete.length === 0) return
 
-  log('info', `WFP cleanup — deleting ${toDelete.length} filters for ${toRemove.length} regions...`)
+  log('info', `WFP cleanup -> deleting ${toDelete.length} filters for ${toRemove.length} regions...`)
 
   const res = await runScript([
     '-Action', 'unblock',

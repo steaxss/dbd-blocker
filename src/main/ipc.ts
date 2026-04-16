@@ -10,8 +10,9 @@ import {
   ruleExists,
   purgeAllWfp,
   checkFirewallHealth,
+  type FirewallHealthResult,
 } from './firewall'
-import { getCidrs, getCidrCounts, getCachedCidrs, fetchAndDiffCidrs } from './ips'
+import { getCidrs, getCidrCounts, getCachedCidrs, refreshAllCidrs } from './ips'
 import { REGION_IDS } from './index'
 import {
   getExePath,
@@ -21,8 +22,6 @@ import {
   markPermanent,
   unmarkPermanent,
 } from './settings'
-
-const GITHUB_REPO = 'steaxs/dbd-blocker'
 
 export type LogEmitter = (level: string, message: string) => void
 
@@ -269,7 +268,7 @@ export function registerIpcHandlers(win: BrowserWindow): void {
   // ── Firewall: unblock all (respects permanent regions) ────────────────────
   ipcMain.handle('unblock-all', async () => {
     const exePath = await requireValidExePath(log)
-    if (!exePath) return
+    if (!exePath) return { ok: false, error: 'DBD executable path not configured or invalid.', code: 'exe_path_invalid' }
 
     log('info', 'Unblocking all regions...')
     for (const regionId of REGION_IDS) {
@@ -282,10 +281,10 @@ export function registerIpcHandlers(win: BrowserWindow): void {
         log('error', `[${regionId}] Exception: ${String(err)}`)
       }
     }
-    // Purge the WFP sublayer to remove any orphaned filters not tracked in state
     await purgeAllWfp(log)
     for (const regionId of REGION_IDS) sendStatus(win, regionId, false)
     log('success', 'Unblock All complete')
+    return { ok: true }
   })
 
   // ── Startup queries ────────────────────────────────────────────────────────
@@ -295,11 +294,12 @@ export function registerIpcHandlers(win: BrowserWindow): void {
   // ── Refresh IPs ────────────────────────────────────────────────────────────
   ipcMain.handle('refresh-ips', async () => {
     log('info', 'Fetching AWS EC2 IP ranges...')
+    const refreshed = await refreshAllCidrs(REGION_IDS)
     let totalAdded = 0
     let totalRemoved = 0
     for (const regionId of REGION_IDS) {
       try {
-        const { cidrs, added, removed } = await fetchAndDiffCidrs(regionId)
+        const { cidrs, added, removed } = refreshed[regionId]
         totalAdded += added
         totalRemoved += removed
         const diff = added || removed ? ` (+${added}/-${removed})` : ''
@@ -320,8 +320,8 @@ export function registerIpcHandlers(win: BrowserWindow): void {
   })
 
   // ── WFP health check — fire-and-forget, logs to console only ─────────────
-  ipcMain.handle('check-firewall-health', () => {
-    checkFirewallHealth(log, getScriptPath('wfp-prereq.ps1'))
+  ipcMain.handle('check-firewall-health', async (): Promise<FirewallHealthResult> => {
+    return checkFirewallHealth(log, getScriptPath('wfp-prereq.ps1'))
   })
 
   // ── Admin check ────────────────────────────────────────────────────────────
@@ -392,7 +392,6 @@ export function registerIpcHandlers(win: BrowserWindow): void {
           path: '/ping',
           method: 'HEAD',
           timeout: 5000,
-          rejectUnauthorized: false,
         }, (res) => {
           res.resume()
           resolve(Date.now() - start)
