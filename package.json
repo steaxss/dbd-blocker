@@ -1,6 +1,6 @@
 {
   "name": "dbd-blocker",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "DBD Server Blocker — block AWS regions for Dead by Daylight",
   "author": "steaxs",
   "main": "out/main/index.js",

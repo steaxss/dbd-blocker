@@ -124,6 +124,7 @@ export interface ElectronAPI {
   getExePath:  () => Promise<string>
   setExePath:  (path: string) => Promise<ExeValidationResult>
   browseExe:   () => Promise<string | null>
+  getAppVersion: () => Promise<string>
   // Settings: permanent regions
   getPermanentRegions: () => Promise<string[]>
   markPermanent:       (regionId: string) => Promise<void>
