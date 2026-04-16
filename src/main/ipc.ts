@@ -337,6 +337,7 @@ export function registerIpcHandlers(win: BrowserWindow): void {
 
   // ── Settings: exe path ─────────────────────────────────────────────────────
   ipcMain.handle('get-exe-path', async () => getExePath())
+  ipcMain.handle('get-app-version', () => app.getVersion())
 
   ipcMain.handle('set-exe-path', async (_, path: string) => {
     const validation = validateExePath(path)

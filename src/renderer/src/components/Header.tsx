@@ -2,23 +2,22 @@ import { useEffect, useState } from 'react'
 
 export function Titlebar() {
   const [isMaximized, setIsMaximized] = useState(false)
+  const [appVersion, setAppVersion] = useState('1.1.0')
 
   useEffect(() => {
     window.api.win.isMaximized().then(setIsMaximized)
+    window.api.getAppVersion().then(setAppVersion).catch(() => {})
   }, [])
 
   return (
     <div className="titlebar-drag flex items-center h-8 shrink-0 bg-[#0a0a0a] border-b border-white/[0.06] select-none">
-      {/* App info */}
       <div className="flex items-center gap-2 pl-3 flex-1">
         <img src="./icon.png" alt="" style={{ width: 18, height: 18, borderRadius: 4, flexShrink: 0 }} />
         <span className="gradient-title text-[14px] font-bold">DBD Blocker</span>
-        <span className="text-[11px]" style={{ fontFamily: 'Inter, sans-serif', color: 'rgba(255,255,255,0.22)' }}>v1.0.0 · by Steaxs</span>
+        <span className="text-[11px]" style={{ fontFamily: 'Inter, sans-serif', color: 'rgba(255,255,255,0.22)' }}>{`v${appVersion} · by Steaxs`}</span>
       </div>
 
-      {/* Window controls — Windows style */}
       <div className="flex h-full no-drag">
-        {/* Minimize */}
         <button
           onClick={() => window.api.win.minimize()}
           className="w-[46px] h-full flex items-center justify-center text-white/60 hover:bg-white/[0.08] hover:text-white transition-colors cursor-default"
@@ -28,7 +27,6 @@ export function Titlebar() {
           </svg>
         </button>
 
-        {/* Maximize / Restore */}
         <button
           onClick={() => { window.api.win.maximize(); setIsMaximized(v => !v) }}
           className="w-[46px] h-full flex items-center justify-center text-white/60 hover:bg-white/[0.08] hover:text-white transition-colors cursor-default"
@@ -45,7 +43,6 @@ export function Titlebar() {
           )}
         </button>
 
-        {/* Close — red on hover */}
         <button
           onClick={() => window.api.win.close()}
           className="w-[46px] h-full flex items-center justify-center text-white/60 hover:bg-[#F44336]/90 hover:text-white transition-colors cursor-default"
