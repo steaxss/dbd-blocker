@@ -6,6 +6,17 @@ import { existsSync } from 'fs'
 const DEFAULT_DBD_EXE =
   'C:\\Program Files (x86)\\Steam\\steamapps\\common\\Dead by Daylight\\DeadByDaylight\\Binaries\\Win64\\DeadByDaylight-Win64-Shipping.exe'
 
+const SUPPORTED_DBD_EXES = {
+  'deadbydaylight-win64-shipping.exe': {
+    channel: 'Steam / Epic Games',
+    binaryDir: 'win64',
+  },
+  'deadbydaylight-wingdk-shipping.exe': {
+    channel: 'Microsoft Store / Xbox app',
+    binaryDir: 'wingdk',
+  },
+} as const
+
 interface AppSettings {
   exePath: string
   permanentRegions: string[]
@@ -87,12 +98,29 @@ export function validateExePath(path: string): ExeValidationResult {
   if (!existsSync(path)) {
     return { ok: false, error: 'File not found — check the path and try again' }
   }
-  const basename = path.split(/[/\\]/).pop() ?? ''
-  if (basename.toLowerCase() !== 'deadbydaylight-win64-shipping.exe') {
+  const parts = path.split(/[/\\]+/).filter(Boolean)
+  const basename = parts.at(-1) ?? ''
+  const normalized = basename.toLowerCase()
+  const expected = SUPPORTED_DBD_EXES[normalized as keyof typeof SUPPORTED_DBD_EXES]
+
+  if (!expected) {
     return {
-      ok: true,
-      warning: `Unexpected filename "${basename}" — make sure this is the correct DBD executable`
+      ok: false,
+      error: `Select DeadByDaylight-Win64-Shipping.exe (Steam/Epic) or DeadByDaylight-WinGDK-Shipping.exe (Microsoft Store/Xbox), not "${basename}".`
     }
   }
+
+  const lowerParts = parts.map((part) => part.toLowerCase())
+  const hasBinaries = lowerParts.includes('binaries')
+  const hasExpectedDir = lowerParts.includes(expected.binaryDir)
+  const hasDbdFolder = lowerParts.includes('deadbydaylight') || lowerParts.includes('dead by daylight')
+
+  if (!hasBinaries || !hasExpectedDir || !hasDbdFolder) {
+    return {
+      ok: true,
+      warning: `${basename} matches the ${expected.channel} build, but the folder layout looks unusual. Double-check that this is the real game executable.`
+    }
+  }
+
   return { ok: true }
 }

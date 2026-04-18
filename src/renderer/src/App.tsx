@@ -558,7 +558,12 @@ export default function App() {
                 <div className="flex items-center gap-2">
                   <span className="text-[11px] font-bold px-1.5 py-0.5 rounded" style={{ background: 'rgba(68,255,65,0.1)', color: '#44FF41', border: '1px solid rgba(68,255,65,0.25)' }}>✓</span>
                   <span className="text-[12px] font-mono text-white/70">DeadByDaylight-Win64-Shipping.exe</span>
-                  <span className="text-[11px] text-white/35 ml-auto">the game</span>
+                  <span className="text-[11px] text-white/35 ml-auto">Steam / Epic</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="text-[11px] font-bold px-1.5 py-0.5 rounded" style={{ background: 'rgba(68,255,65,0.1)', color: '#44FF41', border: '1px solid rgba(68,255,65,0.25)' }}>✓</span>
+                  <span className="text-[12px] font-mono text-white/70">DeadByDaylight-WinGDK-Shipping.exe</span>
+                  <span className="text-[11px] text-white/35 ml-auto">Microsoft Store / Xbox app</span>
                 </div>
                 <div className="flex items-center gap-2">
                   <span className="text-[11px] font-bold px-1.5 py-0.5 rounded" style={{ background: 'rgba(244,67,54,0.1)', color: '#F44336', border: '1px solid rgba(244,67,54,0.25)' }}>✗</span>
@@ -567,7 +572,9 @@ export default function App() {
                 </div>
               </div>
               <p className="text-[11px] font-mono text-white/25 mt-3 leading-relaxed">
-                ...\Dead by Daylight\DeadByDaylight\Binaries\Win64\DeadByDaylight-Win64-Shipping.exe
+                Steam / Epic: ...\Dead by Daylight\DeadByDaylight\Binaries\Win64\DeadByDaylight-Win64-Shipping.exe
+                <br />
+                Microsoft Store / Xbox app: ...\Content\DeadByDaylight\Binaries\WinGDK\DeadByDaylight-WinGDK-Shipping.exe
               </p>
             </div>
 
@@ -580,7 +587,7 @@ export default function App() {
                   spellCheck={false}
                   className="flex-1 px-4 py-2.5 rounded-xl text-[13px] font-mono text-white/80 outline-none"
                   style={{ background: 'rgba(255,255,255,0.06)', border: `1px solid ${exePathResult?.ok === false ? 'rgba(244,67,54,0.5)' : exePathResult?.ok ? 'rgba(68,255,65,0.35)' : 'rgba(255,255,255,0.12)'}` }}
-                  placeholder="C:\...\DeadByDaylight-Win64-Shipping.exe"
+                  placeholder="C:\...\DeadByDaylight-Win64-Shipping.exe or ...\DeadByDaylight-WinGDK-Shipping.exe"
                 />
                 <button
                   onClick={handleBrowseExe}
@@ -644,7 +651,7 @@ export default function App() {
                   spellCheck={false}
                   className="flex-1 px-4 py-2.5 rounded-xl text-[13px] font-mono text-white/80 outline-none"
                   style={{ background: 'rgba(255,255,255,0.06)', border: `1px solid ${exePathResult?.ok === false ? 'rgba(244,67,54,0.5)' : exePathResult?.ok ? 'rgba(68,255,65,0.35)' : 'rgba(255,255,255,0.12)'}` }}
-                  placeholder="C:\...\DeadByDaylight-Win64-Shipping.exe"
+                  placeholder="C:\...\DeadByDaylight-Win64-Shipping.exe or ...\DeadByDaylight-WinGDK-Shipping.exe"
                 />
                 <button
                   onClick={handleBrowseExe}
