@@ -104,6 +104,12 @@ export interface FirewallHealthResult {
   error?: string
 }
 
+export interface AutoDetectResult {
+  found: boolean
+  path?: string
+  error?: string
+}
+
 export interface ElectronAPI {
   win: {
     minimize:    () => void
@@ -124,6 +130,7 @@ export interface ElectronAPI {
   getExePath:  () => Promise<string>
   setExePath:  (path: string) => Promise<ExeValidationResult>
   browseExe:   () => Promise<string | null>
+  autoDetectExe: () => Promise<AutoDetectResult>
   getAppVersion: () => Promise<string>
   // Settings: permanent regions
   getPermanentRegions: () => Promise<string[]>
