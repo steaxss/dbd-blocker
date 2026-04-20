@@ -30,6 +30,7 @@ contextBridge.exposeInMainWorld('api', {
   getExePath:  () => ipcRenderer.invoke('get-exe-path'),
   setExePath:  (path: string) => ipcRenderer.invoke('set-exe-path', path),
   browseExe:   () => ipcRenderer.invoke('browse-exe'),
+  autoDetectExe: () => ipcRenderer.invoke('auto-detect-exe'),
   getAppVersion: () => ipcRenderer.invoke('get-app-version'),
 
   // Settings: permanent regions

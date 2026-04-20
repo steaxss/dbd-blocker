@@ -22,6 +22,7 @@ import {
   markPermanent,
   unmarkPermanent,
 } from './settings'
+import { autoDetectDbdExePath } from './steam'
 
 export type LogEmitter = (level: string, message: string) => void
 
@@ -348,13 +349,27 @@ export function registerIpcHandlers(win: BrowserWindow): void {
   })
 
   ipcMain.handle('browse-exe', async () => {
+    const currentPath = await getExePath()
+    const dir =
+      currentPath.split(/[/\\]/).slice(0, -1).join('\\') ||
+      'C:\\Program Files (x86)\\Steam\\steamapps\\common\\Dead by Daylight'
     const result = await dialog.showOpenDialog(win, {
       title: 'Select Dead by Daylight Executable',
-      defaultPath: 'C:\\Program Files (x86)\\Steam\\steamapps\\common\\Dead by Daylight',
+      defaultPath: existsSync(dir) ? dir : undefined,
       filters: [{ name: 'Executable', extensions: ['exe'] }],
       properties: ['openFile']
     })
     return result.canceled ? null : (result.filePaths[0] ?? null)
+  })
+
+  ipcMain.handle('auto-detect-exe', async () => {
+    const result = autoDetectDbdExePath()
+    if (result.found && result.path) {
+      log('info', `Auto-detected DBD executable: ${result.path}`)
+    } else {
+      log('warning', `Auto-detect failed: ${result.error ?? 'Unknown error'}`)
+    }
+    return result
   })
 
   // ── Ping a region via GameLift HTTPS endpoint (same method as deadbyqueue.com) ──

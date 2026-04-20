@@ -4,6 +4,7 @@ import type {
   RegionState,
   LogEntry,
   ExeValidationResult,
+  AutoDetectResult,
   InitStep,
   UpdateInfo,
   ServerStatusMap,
@@ -246,9 +247,24 @@ export function useAppState() {
             addLog('warning', `Permanent blocks loaded: ${permanent.join(', ')}`)
           }
           if (!exeCheck.ok) {
-            setNeedsExeSetup(true)
-            addLog('error', 'DBD executable not found -> please set the correct path in settings')
-            setStep('settings', { status: 'error', detail: 'Exe not found' })
+            const autoResult = await window.api.autoDetectExe()
+            if (autoResult.found && autoResult.path) {
+              const saveResult = await window.api.setExePath(autoResult.path)
+              if (saveResult.ok) {
+                setExePathState(autoResult.path)
+                setNeedsExeSetup(false)
+                addLog('success', `DBD executable auto-detected: ${autoResult.path}`)
+                setStep('settings', { status: 'done', detail: 'Auto-detected' })
+              } else {
+                setNeedsExeSetup(true)
+                addLog('error', 'DBD executable not found -> please set the correct path in settings')
+                setStep('settings', { status: 'error', detail: 'Exe not found' })
+              }
+            } else {
+              setNeedsExeSetup(true)
+              addLog('error', 'DBD executable not found -> please set the correct path in settings')
+              setStep('settings', { status: 'error', detail: 'Exe not found' })
+            }
           } else {
             setStep('settings', { status: 'done' })
           }
@@ -527,6 +543,14 @@ export function useAppState() {
     }
   }, [])
 
+  const autoDetectExe = useCallback(async (): Promise<AutoDetectResult> => {
+    try {
+      return await window.api.autoDetectExe()
+    } catch (error) {
+      return { found: false, error: getErrorMessage(error) }
+    }
+  }, [])
+
   const pingRegion = useCallback(async (regionId: string) => {
     setRegionStatus(regionId, { pingLoading: true, pingMs: undefined, pingIp: undefined })
     try {
@@ -632,6 +656,7 @@ export function useAppState() {
     unmarkRegionPermanent,
     updateExePath,
     browseExe,
+    autoDetectExe,
     pingRegion,
     pingAll,
     downloadUpdate,
