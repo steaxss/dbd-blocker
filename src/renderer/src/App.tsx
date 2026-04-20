@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { RefreshCw, ShieldOff, AlertTriangle, Settings, X, FolderOpen, LayoutGrid, Globe2, Wifi, Activity, Download, MapPin } from 'lucide-react'
+import { RefreshCw, ShieldOff, AlertTriangle, Settings, X, FolderOpen, LayoutGrid, Globe2, Wifi, Activity, Download, MapPin, Search } from 'lucide-react'
 import { useAppState } from './hooks/useAppState'
 import { Titlebar } from './components/Header'
 import { RegionGrid } from './components/RegionGrid'
@@ -9,7 +9,7 @@ import { ConsolePanel } from './components/ConsolePanel'
 import { SplashScreen } from './components/SplashScreen'
 import { FlagIcon } from './components/FlagIcon'
 import { REGIONS } from './regions'
-import type { ExeValidationResult } from './types'
+import type { AutoDetectResult, ExeValidationResult } from './types'
 
 export default function App() {
   const {
@@ -43,6 +43,7 @@ export default function App() {
     unmarkRegionPermanent,
     updateExePath,
     browseExe,
+    autoDetectExe,
     pingRegion,
     pingAll,
     clearLogs,
@@ -74,9 +75,10 @@ export default function App() {
     if (!showSplash && needsExeSetup) {
       setExePathInput(exePath)
       setExePathResult(null)
+      setAutoDetectResult(null)
       setShowExeSetupModal(true)
     }
-  }, [showSplash, needsExeSetup])
+  }, [showSplash, needsExeSetup, exePath])
 
   // Tooltip hover state for status chips
   const [hoveredChip, setHoveredChip] = useState<'blocked' | 'open' | null>(null)
@@ -111,10 +113,13 @@ export default function App() {
   const [exePathInput, setExePathInput]           = useState('')
   const [exePathResult, setExePathResult]         = useState<ExeValidationResult | null>(null)
   const [savingExe, setSavingExe]                 = useState(false)
+  const [autoDetecting, setAutoDetecting]         = useState(false)
+  const [autoDetectResult, setAutoDetectResult]   = useState<AutoDetectResult | null>(null)
 
   function openSettings() {
     setExePathInput(exePath)
     setExePathResult(null)
+    setAutoDetectResult(null)
     setShowSettings(true)
   }
 
@@ -123,12 +128,27 @@ export default function App() {
     if (picked) setExePathInput(picked)
   }
 
+  async function handleAutoDetect() {
+    setAutoDetecting(true)
+    setAutoDetectResult(null)
+    const result = await autoDetectExe()
+    setAutoDetectResult(result)
+    if (result.found && result.path) {
+      setExePathInput(result.path)
+      setExePathResult(null)
+    }
+    setAutoDetecting(false)
+  }
+
   async function handleSaveExe() {
     setSavingExe(true)
     const result = await updateExePath(exePathInput)
     setExePathResult(result)
     setSavingExe(false)
-    if (result.ok) setShowExeSetupModal(false)
+    if (result.ok) {
+      setShowExeSetupModal(false)
+      setShowSettings(false)
+    }
   }
 
   // Derived lists for tooltip
@@ -419,13 +439,14 @@ export default function App() {
       {/* ── Block warning modal (shown before any block action) ── */}
       {pendingBlockAction && (
         <div
-          className="fixed inset-0 z-[100] flex items-center justify-center"
+          className="fixed inset-0 z-[100] overflow-y-auto px-3 py-4 sm:px-6 sm:py-6"
           style={{ background: 'rgba(0,0,0,0.8)', backdropFilter: 'blur(8px)' }}
         >
-          <div
-            className="rounded-2xl p-8 w-[520px]"
-            style={{ background: 'rgba(18,18,18,0.99)', outline: '1px solid rgba(244,67,54,0.2)', outlineOffset: '-1px', boxShadow: '0 24px 80px rgba(0,0,0,0.9)' }}
-          >
+          <div className="flex min-h-full items-start justify-center sm:items-center">
+            <div
+              className="w-full max-w-[520px] max-h-[calc(100vh-2rem)] overflow-y-auto rounded-2xl p-5 sm:p-8"
+              style={{ background: 'rgba(18,18,18,0.99)', outline: '1px solid rgba(244,67,54,0.2)', outlineOffset: '-1px', boxShadow: '0 24px 80px rgba(0,0,0,0.9)' }}
+            >
             {/* Header */}
             <div className="flex items-start gap-4 mb-6">
               <div
@@ -490,7 +511,7 @@ export default function App() {
             </div>
 
             {/* Don't show again + actions */}
-            <div className="flex items-center justify-between gap-3">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
               <label className="flex items-center gap-2 cursor-pointer select-none group">
                 <input
                   type="checkbox"
@@ -500,22 +521,23 @@ export default function App() {
                 />
                 <span className="text-[12px] text-white/30 group-hover:text-white/50 transition-colors">Don't show again</span>
               </label>
-              <div className="flex items-center gap-2">
+              <div className="flex flex-col-reverse gap-2 sm:flex-row sm:items-center">
                 <button
                   onClick={() => setPendingBlockAction(null)}
-                  className="px-5 py-2.5 rounded-xl text-[13px] font-bold uppercase tracking-wider transition-all hover:-translate-y-px"
+                  className="w-full px-5 py-2.5 rounded-xl text-[13px] font-bold uppercase tracking-wider transition-all hover:-translate-y-px sm:w-auto"
                   style={{ background: 'rgba(255,255,255,0.05)', border: '2px solid rgba(255,255,255,0.12)', color: '#999' }}
                 >
                   Cancel
                 </button>
                 <button
                   onClick={confirmBlock}
-                  className="px-6 py-2.5 rounded-xl text-[13px] font-bold uppercase tracking-wider transition-all hover:-translate-y-px active:translate-y-0"
+                  className="w-full px-6 py-2.5 rounded-xl text-[13px] font-bold uppercase tracking-wider transition-all hover:-translate-y-px active:translate-y-0 sm:w-auto"
                   style={{ background: 'linear-gradient(135deg, #F44336 0%, #C62828 100%)', border: '2px solid rgba(244,67,54,0.4)', color: '#fff', boxShadow: '0 4px 12px rgba(244,67,54,0.35)' }}
                 >
                   I understand — Block
                 </button>
               </div>
+            </div>
             </div>
           </div>
         </div>
@@ -558,7 +580,12 @@ export default function App() {
                 <div className="flex items-center gap-2">
                   <span className="text-[11px] font-bold px-1.5 py-0.5 rounded" style={{ background: 'rgba(68,255,65,0.1)', color: '#44FF41', border: '1px solid rgba(68,255,65,0.25)' }}>✓</span>
                   <span className="text-[12px] font-mono text-white/70">DeadByDaylight-Win64-Shipping.exe</span>
-                  <span className="text-[11px] text-white/35 ml-auto">the game</span>
+                  <span className="text-[11px] text-white/35 ml-auto">Steam / Epic</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="text-[11px] font-bold px-1.5 py-0.5 rounded" style={{ background: 'rgba(68,255,65,0.1)', color: '#44FF41', border: '1px solid rgba(68,255,65,0.25)' }}>✓</span>
+                  <span className="text-[12px] font-mono text-white/70">DeadByDaylight-WinGDK-Shipping.exe</span>
+                  <span className="text-[11px] text-white/35 ml-auto">Microsoft Store / Xbox app</span>
                 </div>
                 <div className="flex items-center gap-2">
                   <span className="text-[11px] font-bold px-1.5 py-0.5 rounded" style={{ background: 'rgba(244,67,54,0.1)', color: '#F44336', border: '1px solid rgba(244,67,54,0.25)' }}>✗</span>
@@ -567,21 +594,32 @@ export default function App() {
                 </div>
               </div>
               <p className="text-[11px] font-mono text-white/25 mt-3 leading-relaxed">
-                ...\Dead by Daylight\DeadByDaylight\Binaries\Win64\DeadByDaylight-Win64-Shipping.exe
+                Steam / Epic: ...\Dead by Daylight\DeadByDaylight\Binaries\Win64\DeadByDaylight-Win64-Shipping.exe
+                <br />
+                Microsoft Store / Xbox app: ...\Content\DeadByDaylight\Binaries\WinGDK\DeadByDaylight-WinGDK-Shipping.exe
               </p>
             </div>
 
             <div className="mb-6">
               <label className="block text-[13px] font-bold uppercase tracking-widest text-white/50 mb-2">Executable Path</label>
+              <input
+                value={exePathInput}
+                onChange={e => { setExePathInput(e.target.value); setExePathResult(null); setAutoDetectResult(null) }}
+                spellCheck={false}
+                className="w-full px-4 py-2.5 rounded-xl text-[13px] font-mono text-white/80 outline-none mb-2"
+                style={{ background: 'rgba(255,255,255,0.06)', border: `1px solid ${exePathResult?.ok === false ? 'rgba(244,67,54,0.5)' : exePathResult?.ok ? 'rgba(68,255,65,0.35)' : 'rgba(255,255,255,0.12)'}` }}
+                placeholder="C:\...\DeadByDaylight-Win64-Shipping.exe or ...\DeadByDaylight-WinGDK-Shipping.exe"
+              />
               <div className="flex gap-2 mb-2">
-                <input
-                  value={exePathInput}
-                  onChange={e => { setExePathInput(e.target.value); setExePathResult(null) }}
-                  spellCheck={false}
-                  className="flex-1 px-4 py-2.5 rounded-xl text-[13px] font-mono text-white/80 outline-none"
-                  style={{ background: 'rgba(255,255,255,0.06)', border: `1px solid ${exePathResult?.ok === false ? 'rgba(244,67,54,0.5)' : exePathResult?.ok ? 'rgba(68,255,65,0.35)' : 'rgba(255,255,255,0.12)'}` }}
-                  placeholder="C:\...\DeadByDaylight-Win64-Shipping.exe"
-                />
+                <button
+                  onClick={handleAutoDetect}
+                  disabled={autoDetecting}
+                  className="flex items-center gap-1.5 px-3 py-2.5 rounded-xl text-[12px] font-bold uppercase tracking-wider transition-all hover:-translate-y-px disabled:opacity-40"
+                  style={{ background: 'rgba(181,121,255,0.12)', border: '1px solid rgba(181,121,255,0.3)', color: '#B579FF' }}
+                >
+                  <Search className="w-3.5 h-3.5" />
+                  {autoDetecting ? 'Searching...' : 'Auto-detect'}
+                </button>
                 <button
                   onClick={handleBrowseExe}
                   className="flex items-center gap-1.5 px-3 py-2.5 rounded-xl text-[12px] font-bold uppercase tracking-wider transition-all hover:-translate-y-px"
@@ -591,6 +629,16 @@ export default function App() {
                   Browse
                 </button>
               </div>
+              {autoDetectResult && !autoDetectResult.found && (
+                <p className="text-[12px] mt-1.5 leading-relaxed" style={{ color: '#FF9800' }}>
+                  {autoDetectResult.error ?? 'Could not find Dead by Daylight via Steam'}
+                </p>
+              )}
+              {autoDetectResult && autoDetectResult.found && (
+                <p className="text-[12px] mt-1.5 leading-relaxed" style={{ color: '#44FF41' }}>
+                  Found! Click Save & Continue to confirm.
+                </p>
+              )}
               {exePathResult && (
                 <p className="text-[12px] mt-1.5 leading-relaxed" style={{ color: exePathResult.ok ? (exePathResult.warning ? '#FF9800' : '#44FF41') : '#F44336' }}>
                   {exePathResult.error ?? exePathResult.warning ?? '✓ Path saved successfully'}
@@ -637,15 +685,24 @@ export default function App() {
               <label className="block text-[13px] font-bold uppercase tracking-widest text-white/50 mb-3">
                 Dead by Daylight Executable
               </label>
+              <input
+                value={exePathInput}
+                onChange={e => { setExePathInput(e.target.value); setExePathResult(null); setAutoDetectResult(null) }}
+                spellCheck={false}
+                className="w-full px-4 py-2.5 rounded-xl text-[13px] font-mono text-white/80 outline-none mb-2"
+                style={{ background: 'rgba(255,255,255,0.06)', border: `1px solid ${exePathResult?.ok === false ? 'rgba(244,67,54,0.5)' : exePathResult?.ok ? 'rgba(68,255,65,0.35)' : 'rgba(255,255,255,0.12)'}` }}
+                placeholder="C:\...\DeadByDaylight-Win64-Shipping.exe or ...\DeadByDaylight-WinGDK-Shipping.exe"
+              />
               <div className="flex gap-2 mb-2">
-                <input
-                  value={exePathInput}
-                  onChange={e => { setExePathInput(e.target.value); setExePathResult(null) }}
-                  spellCheck={false}
-                  className="flex-1 px-4 py-2.5 rounded-xl text-[13px] font-mono text-white/80 outline-none"
-                  style={{ background: 'rgba(255,255,255,0.06)', border: `1px solid ${exePathResult?.ok === false ? 'rgba(244,67,54,0.5)' : exePathResult?.ok ? 'rgba(68,255,65,0.35)' : 'rgba(255,255,255,0.12)'}` }}
-                  placeholder="C:\...\DeadByDaylight-Win64-Shipping.exe"
-                />
+                <button
+                  onClick={handleAutoDetect}
+                  disabled={autoDetecting}
+                  className="flex items-center gap-1.5 px-3 py-2.5 rounded-xl text-[12px] font-bold uppercase tracking-wider transition-all hover:-translate-y-px disabled:opacity-40"
+                  style={{ background: 'rgba(181,121,255,0.12)', border: '1px solid rgba(181,121,255,0.3)', color: '#B579FF' }}
+                >
+                  <Search className="w-3.5 h-3.5" />
+                  {autoDetecting ? 'Searching...' : 'Auto-detect'}
+                </button>
                 <button
                   onClick={handleBrowseExe}
                   className="flex items-center gap-1.5 px-3 py-2.5 rounded-xl text-[12px] font-bold uppercase tracking-wider transition-all hover:-translate-y-px"
@@ -655,6 +712,16 @@ export default function App() {
                   Browse
                 </button>
               </div>
+              {autoDetectResult && !autoDetectResult.found && (
+                <p className="text-[12px] mt-1.5 leading-relaxed" style={{ color: '#FF9800' }}>
+                  {autoDetectResult.error ?? 'Could not find Dead by Daylight via Steam'}
+                </p>
+              )}
+              {autoDetectResult && autoDetectResult.found && (
+                <p className="text-[12px] mt-1.5 leading-relaxed" style={{ color: '#44FF41' }}>
+                  Found! Click Save to confirm.
+                </p>
+              )}
               {exePathResult && (
                 <p className="text-[12px] mt-1.5 leading-relaxed" style={{ color: exePathResult.ok ? (exePathResult.warning ? '#FF9800' : '#44FF41') : '#F44336' }}>
                   {exePathResult.error ?? exePathResult.warning ?? '✓ Path saved successfully'}

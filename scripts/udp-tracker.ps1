@@ -5,11 +5,14 @@
 # Outputs one JSON line per poll tick to stdout; debug logs go to stderr.
 param(
     [string]$DbdProcessName = 'DeadByDaylight-Win64-Shipping',
+    [ValidateRange(100, 5000)]
     [int]$PollMs     = 300,
+    [ValidateRange(1, 60)]
     [int]$WindowSecs = 5
 )
 
-$ErrorActionPreference = 'SilentlyContinue'
+Set-StrictMode -Version Latest
+$ErrorActionPreference = 'Stop'
 
 # ── Embedded C# — P/Invoke for IP Helper API ──────────────────────────────────
 $csharpCode = @'
@@ -129,8 +132,23 @@ try {
 # ── Helpers ────────────────────────────────────────────────────────────────────
 function Log([string]$msg) { [Console]::Error.WriteLine("[Tracker] $msg") }
 
+function Get-DbdProcess {
+    $candidateNames = @(
+        $DbdProcessName,
+        'DeadByDaylight-Win64-Shipping',
+        'DeadByDaylight-WinGDK-Shipping'
+    ) | Where-Object { $_ } | Select-Object -Unique
+
+    foreach ($name in $candidateNames) {
+        $p = Get-Process -Name $name -ErrorAction SilentlyContinue | Select-Object -First 1
+        if ($p) { return $p }
+    }
+
+    return $null
+}
+
 function Get-DbdPid {
-    $p = Get-Process -Name $DbdProcessName -ErrorAction SilentlyContinue | Select-Object -First 1
+    $p = Get-DbdProcess
     if ($p) { return $p.Id } else { return 0 }
 }
 
@@ -164,7 +182,9 @@ while ($true) {
             Log "DBD stopped — clearing window"
             $window.Clear()
         } else {
-            Log "DBD detected (PID: $dbdPid)"
+            $dbdProcess = Get-DbdProcess
+            $dbdLabel = if ($dbdProcess) { "$($dbdProcess.ProcessName) (PID: $dbdPid)" } else { "PID: $dbdPid" }
+            Log "DBD detected ($dbdLabel)"
         }
         $lastDbdPid = $dbdPid
     }

@@ -66,6 +66,10 @@ function runScript(args: string[]): Promise<{ ok: boolean; stdout: string; stder
   return runPsFile(getWfpScript(), args)
 }
 
+function encodeJsonArg(value: string): string {
+  return Buffer.from(value, 'utf8').toString('base64')
+}
+
 export function runPsFile(scriptPath: string, args: string[]): Promise<{ ok: boolean; stdout: string; stderr: string }> {
   return new Promise((resolve) => {
     const child = spawn(
@@ -108,7 +112,7 @@ export async function wfpBlock(
     const old = blockedState.get(regionId)!
     if (old.length > 0) {
       log('step', `[${regionId}] [1/3] Cleaning up ${old.length} stale WFP filters...`)
-      await runScript(['-Action', 'unblock', '-FilterIdsJson', JSON.stringify(old)])
+      await runScript(['-Action', 'unblock', '-FilterIdsJsonBase64', encodeJsonArg(JSON.stringify(old))])
     }
     blockedState.delete(regionId)
     await saveState()
@@ -119,7 +123,7 @@ export async function wfpBlock(
   const scopeLabel = processPath ? ' (DBD only)' : ''
   log('step', `[${regionId}] [2/3] Creating ${cidrs.length} WFP block filters${scopeLabel}...`)
 
-  const blockArgs = ['-Action', 'block', '-CidrsJson', JSON.stringify(cidrs)]
+  const blockArgs = ['-Action', 'block', '-CidrsJsonBase64', encodeJsonArg(JSON.stringify(cidrs))]
   if (processPath) blockArgs.push('-ProcessPath', processPath)
 
   const res = await runScript(blockArgs)
@@ -145,9 +149,9 @@ export async function wfpBlock(
   }
 
   log('step', `[${regionId}] [3/3] Verifying WFP filter is active...`)
-  const spotCheck = await runScript(['-Action', 'check', '-FilterIdsJson', JSON.stringify([filterIds[0]])])
+  const spotCheck = await runScript(['-Action', 'check', '-FilterIdsJsonBase64', encodeJsonArg(JSON.stringify([filterIds[0]]))])
   if (spotCheck.stdout.trim() !== 'true') {
-    await runScript(['-Action', 'unblock', '-FilterIdsJson', JSON.stringify(filterIds)])
+    await runScript(['-Action', 'unblock', '-FilterIdsJsonBase64', encodeJsonArg(JSON.stringify(filterIds))])
     blockedState.delete(regionId)
     await saveState()
     const err = 'WFP verification failed. Blocking has been rolled back.'
@@ -179,7 +183,7 @@ export async function wfpUnblock(
 
   const res = await runScript([
     '-Action', 'unblock',
-    '-FilterIdsJson', JSON.stringify(filterIds)
+    '-FilterIdsJsonBase64', encodeJsonArg(JSON.stringify(filterIds))
   ])
 
   if (!res.ok) {
@@ -240,7 +244,7 @@ export async function wfpUnblockMany(regionIds: string[], log: LogEmitter): Prom
 
   const res = await runScript([
     '-Action', 'unblock',
-    '-FilterIdsJson', JSON.stringify(toDelete)
+    '-FilterIdsJsonBase64', encodeJsonArg(JSON.stringify(toDelete))
   ])
 
   if (!res.ok) {
