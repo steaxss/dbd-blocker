@@ -439,13 +439,14 @@ export default function App() {
       {/* ── Block warning modal (shown before any block action) ── */}
       {pendingBlockAction && (
         <div
-          className="fixed inset-0 z-[100] flex items-center justify-center"
+          className="fixed inset-0 z-[100] overflow-y-auto px-3 py-4 sm:px-6 sm:py-6"
           style={{ background: 'rgba(0,0,0,0.8)', backdropFilter: 'blur(8px)' }}
         >
-          <div
-            className="rounded-2xl p-8 w-[520px]"
-            style={{ background: 'rgba(18,18,18,0.99)', outline: '1px solid rgba(244,67,54,0.2)', outlineOffset: '-1px', boxShadow: '0 24px 80px rgba(0,0,0,0.9)' }}
-          >
+          <div className="flex min-h-full items-start justify-center sm:items-center">
+            <div
+              className="w-full max-w-[520px] max-h-[calc(100vh-2rem)] overflow-y-auto rounded-2xl p-5 sm:p-8"
+              style={{ background: 'rgba(18,18,18,0.99)', outline: '1px solid rgba(244,67,54,0.2)', outlineOffset: '-1px', boxShadow: '0 24px 80px rgba(0,0,0,0.9)' }}
+            >
             {/* Header */}
             <div className="flex items-start gap-4 mb-6">
               <div
@@ -510,7 +511,7 @@ export default function App() {
             </div>
 
             {/* Don't show again + actions */}
-            <div className="flex items-center justify-between gap-3">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
               <label className="flex items-center gap-2 cursor-pointer select-none group">
                 <input
                   type="checkbox"
@@ -520,22 +521,23 @@ export default function App() {
                 />
                 <span className="text-[12px] text-white/30 group-hover:text-white/50 transition-colors">Don't show again</span>
               </label>
-              <div className="flex items-center gap-2">
+              <div className="flex flex-col-reverse gap-2 sm:flex-row sm:items-center">
                 <button
                   onClick={() => setPendingBlockAction(null)}
-                  className="px-5 py-2.5 rounded-xl text-[13px] font-bold uppercase tracking-wider transition-all hover:-translate-y-px"
+                  className="w-full px-5 py-2.5 rounded-xl text-[13px] font-bold uppercase tracking-wider transition-all hover:-translate-y-px sm:w-auto"
                   style={{ background: 'rgba(255,255,255,0.05)', border: '2px solid rgba(255,255,255,0.12)', color: '#999' }}
                 >
                   Cancel
                 </button>
                 <button
                   onClick={confirmBlock}
-                  className="px-6 py-2.5 rounded-xl text-[13px] font-bold uppercase tracking-wider transition-all hover:-translate-y-px active:translate-y-0"
+                  className="w-full px-6 py-2.5 rounded-xl text-[13px] font-bold uppercase tracking-wider transition-all hover:-translate-y-px active:translate-y-0 sm:w-auto"
                   style={{ background: 'linear-gradient(135deg, #F44336 0%, #C62828 100%)', border: '2px solid rgba(244,67,54,0.4)', color: '#fff', boxShadow: '0 4px 12px rgba(244,67,54,0.35)' }}
                 >
                   I understand — Block
                 </button>
               </div>
+            </div>
             </div>
           </div>
         </div>
