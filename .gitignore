@@ -2,6 +2,3 @@ node_modules/
 out/
 dist/
 .DS_Store
-
-# Local agent tooling
-.claude/

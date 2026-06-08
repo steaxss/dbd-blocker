@@ -1,9 +1,20 @@
 import { resolve } from 'path'
 import { defineConfig, externalizeDepsPlugin } from 'electron-vite'
+import type { BuildEnvironmentOptions } from 'vite'
 import react from '@vitejs/plugin-react'
 import obfuscator from 'rollup-plugin-obfuscator'
 
 const isProd = process.env.OBFUSCATE === '1'
+
+const rendererBuild: BuildEnvironmentOptions = isProd
+  ? {
+      minify: 'terser',
+      terserOptions: {
+        compress: { drop_console: false, passes: 2 },
+        mangle: true,
+      } as BuildEnvironmentOptions['terserOptions'],
+    }
+  : {}
 
 const obfuscatorPlugin = () =>
   obfuscator({
@@ -41,14 +52,6 @@ export default defineConfig({
       }
     },
     plugins: [react()],
-    build: {
-      ...(isProd && {
-        minify: 'terser' as const,
-        terserOptions: {
-          compress: { drop_console: false, passes: 2 },
-          mangle: true,
-        },
-      }),
-    },
+    build: rendererBuild,
   }
 })

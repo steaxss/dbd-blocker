@@ -26,7 +26,6 @@ import { autoDetectDbdExePath } from './steam'
 
 export type LogEmitter = (level: string, message: string) => void
 
-// ── ETW connection tracker (Microsoft-Windows-Kernel-Network) ──────────────
 interface TrackerOutput {
   dbdRunning:     boolean
   current_server: string | null
@@ -59,7 +58,6 @@ const trackerState = {
 }
 let trackerProc: ChildProcess | null = null
 
-// Cached CIDR data — refreshed every 60s so newly fetched ranges are picked up
 let cidrCache: Array<{ regionId: string; cidrs: string[] }> | null = null
 let cidrCacheTime = 0
 
@@ -149,11 +147,9 @@ function startTracker(win: BrowserWindow, log: LogEmitter): void {
         exitlagRunning: data.exitlagRunning ?? false,
       }
 
-      // Log game server region change
       if (currentRegion && currentRegion !== prev.currentRegion) {
         log('success', `[Tracker] Game server: ${currentRegion} (${data.current_server}) confidence=${Math.round(data.confidence * 100)}%`)
       }
-      // Log ExitLag detection
       if (data.exitlagRunning && !prev.exitlagRunning) {
         log('warning', '[Tracker] ExitLag detected — game server detection may show relay IPs instead of actual server')
       }
@@ -203,11 +199,6 @@ function sendStatus(win: BrowserWindow, regionId: string, blocked: boolean): voi
   }
 }
 
-/**
- * Validates the configured DBD exe path.
- * Returns the path string if valid, null if not (and logs an error).
- * Applied as a guard before any block/unblock operation.
- */
 async function requireValidExePath(log: LogEmitter): Promise<string | null> {
   const path = await getExePath()
   const validation = validateExePath(path)
@@ -221,7 +212,6 @@ async function requireValidExePath(log: LogEmitter): Promise<string | null> {
 export function registerIpcHandlers(win: BrowserWindow): void {
   const log = makeLogEmitter(win)
 
-  // ── Firewall: block one region ─────────────────────────────────────────────
   ipcMain.handle('block-region', async (_, regionId: string) => {
     try {
       if (regionId === 'us-east-1') {
@@ -249,7 +239,6 @@ export function registerIpcHandlers(win: BrowserWindow): void {
     }
   })
 
-  // ── Firewall: unblock one region ───────────────────────────────────────────
   ipcMain.handle('unblock-region', async (_, regionId: string) => {
     try {
       const exePath = await requireValidExePath(log)
@@ -266,7 +255,6 @@ export function registerIpcHandlers(win: BrowserWindow): void {
     }
   })
 
-  // ── Firewall: unblock all (respects permanent regions) ────────────────────
   ipcMain.handle('unblock-all', async () => {
     const exePath = await requireValidExePath(log)
     if (!exePath) return { ok: false, error: 'DBD executable path not configured or invalid.', code: 'exe_path_invalid' }
@@ -288,11 +276,9 @@ export function registerIpcHandlers(win: BrowserWindow): void {
     return { ok: true }
   })
 
-  // ── Startup queries ────────────────────────────────────────────────────────
   ipcMain.handle('get-status', async () => getBlockedRegions(REGION_IDS))
   ipcMain.handle('get-cidr-counts', async () => getCidrCounts(REGION_IDS))
 
-  // ── Refresh IPs ────────────────────────────────────────────────────────────
   ipcMain.handle('refresh-ips', async () => {
     log('info', 'Fetching AWS EC2 IP ranges...')
     const refreshed = await refreshAllCidrs(REGION_IDS)
@@ -314,18 +300,15 @@ export function registerIpcHandlers(win: BrowserWindow): void {
     return { added: totalAdded, removed: totalRemoved }
   })
 
-  // ── Validate current exe path (without saving) ────────────────────────────
   ipcMain.handle('check-exe-path', async () => {
     const path = await getExePath()
     return validateExePath(path)
   })
 
-  // ── WFP health check — fire-and-forget, logs to console only ─────────────
   ipcMain.handle('check-firewall-health', async (): Promise<FirewallHealthResult> => {
     return checkFirewallHealth(log, getScriptPath('wfp-prereq.ps1'))
   })
 
-  // ── Admin check ────────────────────────────────────────────────────────────
   ipcMain.handle('is-admin', async () => {
     try {
       const { execFileSync } = await import('child_process')
@@ -336,7 +319,6 @@ export function registerIpcHandlers(win: BrowserWindow): void {
     }
   })
 
-  // ── Settings: exe path ─────────────────────────────────────────────────────
   ipcMain.handle('get-exe-path', async () => getExePath())
   ipcMain.handle('get-app-version', () => app.getVersion())
 
@@ -372,9 +354,7 @@ export function registerIpcHandlers(win: BrowserWindow): void {
     return result
   })
 
-  // ── Ping a region via GameLift HTTPS endpoint (same method as deadbyqueue.com) ──
   ipcMain.handle('ping-region', async (_, regionId: string) => {
-    // GameLift/AWS ping hosts — identical to what deadbyqueue.com uses
     const PING_HOSTS: Record<string, string> = {
       'us-east-1':      'gamelift.us-east-1.amazonaws.com',
       'us-east-2':      'gamelift.us-east-2.amazonaws.com',
@@ -398,7 +378,6 @@ export function registerIpcHandlers(win: BrowserWindow): void {
 
     const { default: https } = await import('https')
 
-    // Run 4 pings, return median (same approach as deadbyqueue)
     async function singlePing(): Promise<number | null> {
       return new Promise((resolve) => {
         const start = Date.now()
@@ -418,10 +397,8 @@ export function registerIpcHandlers(win: BrowserWindow): void {
       })
     }
 
-    // Warm up connection (first request often slow due to TCP/TLS handshake)
     await singlePing()
 
-    // 6 real samples after warmup
     const samples: number[] = []
     for (let i = 0; i < 6; i++) {
       const ms = await singlePing()
@@ -430,17 +407,14 @@ export function registerIpcHandlers(win: BrowserWindow): void {
 
     if (samples.length === 0) return { ok: true, ip: host, ms: null }
 
-    // Trimmed mean: discard highest and lowest, average the rest
     samples.sort((a, b) => a - b)
     const trimmed = samples.length > 2 ? samples.slice(1, -1) : samples
     const avg = Math.round(trimmed.reduce((s, v) => s + v, 0) / trimmed.length)
     return { ok: true, ip: host, ms: avg }
   })
 
-  // ── UDP tracker: returns last known state ──────────────────────────────────
   ipcMain.handle('get-active-connections', () => trackerState.lastResult)
 
-  // ── Reset tracker — clears detected server without stopping tracker ────────
   ipcMain.handle('reset-udp-monitor', () => {
     trackerState.lastResult = {
       ...trackerState.lastResult,
@@ -453,11 +427,9 @@ export function registerIpcHandlers(win: BrowserWindow): void {
     log('info', '[Tracker] Server cleared')
   })
 
-  // ── Manual start/stop (tracker is OFF by default, user enables it) ────────
   ipcMain.handle('start-udp-tracker', () => startTracker(win, log))
   ipcMain.handle('stop-udp-tracker',  () => stopTracker(log))
 
-  // ── Settings: permanent regions ────────────────────────────────────────────
   ipcMain.handle('get-permanent-regions', async () => getPermanentRegions())
 
   ipcMain.handle('mark-permanent', async (_, regionId: string) => {
@@ -470,7 +442,6 @@ export function registerIpcHandlers(win: BrowserWindow): void {
     log('info', `[${regionId}] Permanent flag removed — rule will be cleared on app close`)
   })
 
-  // ── Server status from deadbyqueue API ────────────────────────────────────
   ipcMain.handle('get-server-status', async () => {
     try {
       const { default: https } = await import('https')
@@ -516,7 +487,6 @@ export function registerIpcHandlers(win: BrowserWindow): void {
     }
   })
 
-  // ── Auto-update (electron-updater) ──────────────────────────────────────────
   ipcMain.handle('check-for-update', async () => {
     const _mod = await import('electron-updater'); const autoUpdater = _mod.autoUpdater ?? (_mod.default as any)?.autoUpdater
     try {

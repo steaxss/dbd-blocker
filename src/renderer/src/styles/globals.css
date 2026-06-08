@@ -30,7 +30,6 @@
   .titlebar-drag { -webkit-app-region: drag; }
   .no-drag       { -webkit-app-region: no-drag; }
 
-  /* Region card toggle segments */
   .seg-open-active {
     background: rgba(68, 255, 65, 0.15);
     color: #44FF41;
@@ -64,12 +63,10 @@
     color: rgba(244, 67, 54, 0.8);
   }
 
-  /* Ping button tooltip */
   .ping-btn-wrap:hover .ping-tooltip {
     opacity: 1;
   }
 
-  /* Gradient text utilities */
   .gradient-title {
     font-family: 'Poppins', sans-serif;
     background: linear-gradient(94deg, #FF6BCB 0%, #FFE96D 50%, #B579FF 100%);
@@ -86,7 +83,6 @@
     background-clip: text;
   }
 
-  /* Exclusive selection mode — card states */
   .exclusive-card-idle {
     opacity: 0.45;
     filter: saturate(0.3);
@@ -105,7 +101,6 @@
     cursor: pointer;
   }
 
-  /* Leaflet map overrides */
   .leaflet-container { background: #0a0a0a !important; }
   .leaflet-tile-pane { filter: brightness(0.88) contrast(1.05); }
 
@@ -123,7 +118,6 @@
   .leaflet-tooltip-top::before  { display: none !important; }
   .leaflet-tooltip-left::before { display: none !important; }
 
-  /* Dark popup */
   .leaflet-popup-content-wrapper {
     background: rgba(14,14,14,0.98) !important;
     border: 1px solid rgba(255,255,255,0.1) !important;
@@ -148,13 +142,11 @@
   }
   .leaflet-popup-close-button:hover { color: #fff !important; }
 
-  /* Splash progress bar shimmer */
   @keyframes progress-shimmer {
     0%   { transform: translateX(-150%); }
     100% { transform: translateX(400%); }
   }
 
-  /* Animated radial glow background */
   .animated-bg {
     position: fixed;
     inset: 0;

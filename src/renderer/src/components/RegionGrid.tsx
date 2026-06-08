@@ -30,12 +30,10 @@ export function RegionGrid({
   const mmSet = new Set(matchmakingRegions)
   const hasMatchmaking = matchmakingRegions.length > 0
 
-  // Matchmaking region definitions (ordered like REGIONS)
   const mmRegionDefs = REGIONS.filter((r) => mmSet.has(r.id))
 
   return (
     <div className="space-y-7">
-      {/* ── Your Matchmaking Region (shown first) ── */}
       {hasMatchmaking && (
         <section>
           <div className="flex items-center justify-between mb-3 px-0.5">
@@ -84,9 +82,7 @@ export function RegionGrid({
         </section>
       )}
 
-      {/* ── Other regions by continent (excluding matchmaking) ── */}
       {regionsByContinent.map(({ continent, regions: contRegions }) => {
-        // Filter out matchmaking regions already shown above
         const filteredRegions = hasMatchmaking
           ? contRegions.filter((r) => !mmSet.has(r.id))
           : contRegions
@@ -97,7 +93,6 @@ export function RegionGrid({
 
         return (
           <section key={continent}>
-            {/* Section header */}
             <div className="flex items-center justify-between mb-3 px-0.5">
               <span className="gradient-title text-[10px] font-bold uppercase tracking-[0.14em]">
                 {continent}
@@ -116,7 +111,6 @@ export function RegionGrid({
               )}
             </div>
 
-            {/* Cards */}
             <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2.5">
               {filteredRegions.map((r) => {
                 const state = regionMap.get(r.id)

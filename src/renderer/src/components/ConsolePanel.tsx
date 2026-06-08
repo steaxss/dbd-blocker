@@ -35,7 +35,6 @@ export function ConsolePanel({ logs, onClear }: ConsolePanelProps) {
   const [height, setHeight] = useState(DEFAULT_HEIGHT)
   const [collapsed, setCollapsed] = useState(false)
 
-  // drag-to-resize
   const dragRef = useRef<{ startY: number; startH: number } | null>(null)
 
   const onDragStart = useCallback((e: React.MouseEvent) => {
@@ -81,7 +80,6 @@ export function ConsolePanel({ logs, onClear }: ConsolePanelProps) {
       className="shrink-0 flex flex-col border-t border-white/[0.06] relative z-10"
       style={{ height: collapsed ? 33 : height, background: 'rgba(10, 10, 10, 0.98)', transition: 'height 0.15s ease' }}
     >
-      {/* Drag handle */}
       {!collapsed && (
         <div
           onMouseDown={onDragStart}
@@ -92,7 +90,6 @@ export function ConsolePanel({ logs, onClear }: ConsolePanelProps) {
         </div>
       )}
 
-      {/* Header */}
       <div className="flex items-center justify-between px-5 border-b border-white/[0.05]" style={{ height: 33, minHeight: 33 }}>
         <div className="flex items-center gap-2">
           <span className="gradient-title text-[10px] font-bold uppercase tracking-[0.14em]">
@@ -137,7 +134,6 @@ export function ConsolePanel({ logs, onClear }: ConsolePanelProps) {
         </div>
       </div>
 
-      {/* Logs */}
       {!collapsed && (
         <div
           ref={containerRef}

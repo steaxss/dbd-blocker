@@ -53,10 +53,8 @@ export default function App() {
   const activeCount = regions.filter((region) => region.status === 'active').length
   const actionsLocked = Boolean(criticalError)
 
-  // View: grid | map | connections
   const [view, setView] = useState<'grid' | 'map' | 'connections'>('grid')
 
-  // Splash screen fade-out
   const [showSplash, setShowSplash]       = useState(true)
   const [splashExiting, setSplashExiting] = useState(false)
 
@@ -68,7 +66,6 @@ export default function App() {
     }
   }, [initDone])
 
-  // Exe setup modal
   const [showExeSetupModal, setShowExeSetupModal] = useState(false)
 
   useEffect(() => {
@@ -80,10 +77,8 @@ export default function App() {
     }
   }, [showSplash, needsExeSetup, exePath])
 
-  // Tooltip hover state for status chips
   const [hoveredChip, setHoveredChip] = useState<'blocked' | 'open' | null>(null)
 
-  // Block warning modal — shown before any block action
   const [pendingBlockAction, setPendingBlockAction] = useState<(() => Promise<void>) | null>(null)
   const [dontShowAgain, setDontShowAgain] = useState(false)
 
@@ -108,7 +103,6 @@ export default function App() {
     withBlockWarning(() => blockRegion(regionId))
   }
 
-  // Settings dialog
   const [showSettings, setShowSettings]           = useState(false)
   const [exePathInput, setExePathInput]           = useState('')
   const [exePathResult, setExePathResult]         = useState<ExeValidationResult | null>(null)
@@ -151,7 +145,6 @@ export default function App() {
     }
   }
 
-  // Derived lists for tooltip
   const blockedRegions = regions.filter(r => r.status === 'blocked')
   const openRegions    = regions.filter(r => r.status === 'active')
 
@@ -164,13 +157,10 @@ export default function App() {
   return (
     <div className="flex flex-col h-screen bg-[#0a0a0a] text-white select-none relative">
 
-      {/* Animated radial glow background */}
       <div className="animated-bg" />
 
-      {/* Titlebar — Windows controls */}
       <Titlebar />
 
-      {/* Update banner */}
       {updateInfo?.available && (
         <div
           className="shrink-0 flex items-center justify-between px-6 py-2 relative z-40"
@@ -208,25 +198,20 @@ export default function App() {
         </div>
       )}
 
-      {/* Header */}
       <div
         className="shrink-0 border-b border-white/[0.06] relative z-30 titlebar-drag"
         style={{ background: 'rgba(18, 18, 18, 0.95)', boxShadow: '0 8px 32px rgba(0,0,0,0.35)' }}
       >
-        {/* App title */}
         <div className="pt-5 pb-3 text-center pointer-events-none">
           <h1 className="gradient-header text-[1.55rem] font-bold tracking-[0.14em] uppercase">
             DBD Server Blocker
           </h1>
         </div>
 
-        {/* Toolbar */}
         <div className="no-drag px-6 pb-4 flex items-center justify-between gap-4">
 
-          {/* Status chips with hover tooltips */}
           <div className="flex items-center gap-2">
 
-            {/* Blocked chip */}
             {blockedCount > 0 && (
               <div
                 className="relative"
@@ -262,7 +247,6 @@ export default function App() {
               </div>
             )}
 
-            {/* Open chip */}
             <div
               className="relative"
               onMouseEnter={() => setHoveredChip('open')}
@@ -296,7 +280,6 @@ export default function App() {
               )}
             </div>
 
-            {/* Admin warning */}
             {isAdmin === false && (
               <div
                 className="flex items-center gap-1.5 rounded-full px-4 py-1.5 text-[12px] font-semibold uppercase tracking-[0.06em]"
@@ -309,7 +292,6 @@ export default function App() {
 
           </div>
 
-          {/* View toggle */}
           <div
             className="flex rounded-[10px] overflow-hidden ml-auto mr-2"
             style={{ border: '1px solid rgba(255,255,255,0.12)' }}
@@ -330,10 +312,8 @@ export default function App() {
             ))}
           </div>
 
-          {/* Action buttons */}
           <div className="flex items-center gap-2">
 
-            {/* Settings */}
             <button
               onClick={openSettings}
               className="flex items-center justify-center w-8 h-8 rounded-lg text-[13px] font-bold uppercase tracking-[0.08em] transition-all duration-200 hover:-translate-y-px"
@@ -342,7 +322,6 @@ export default function App() {
               <Settings className="w-3.5 h-3.5" />
             </button>
 
-            {/* Refresh IPs with cooldown */}
             <button
               onClick={refreshIps}
               disabled={actionsLocked || globalLoading || refreshCooldown > 0}
@@ -354,7 +333,6 @@ export default function App() {
               {refreshCooldown > 0 ? `${refreshCooldown}s` : 'Refresh IPs'}
             </button>
 
-            {/* Ping All */}
             <button
               onClick={pingAll}
               disabled={actionsLocked || globalLoading}
@@ -379,7 +357,6 @@ export default function App() {
         </div>
       </div>
 
-      {/* Matchmaking region banner */}
       {matchmakingRegions.length > 0 && (
         <div
           className="shrink-0 flex items-center justify-between px-6 py-1.5 relative z-20"
@@ -398,7 +375,6 @@ export default function App() {
         </div>
       )}
 
-      {/* Main content */}
       <div className="flex-1 overflow-hidden relative z-10" onClick={() => setHoveredChip(null)}>
         {view === 'connections' ? (
           <ActiveConnections />
@@ -433,10 +409,8 @@ export default function App() {
         )}
       </div>
 
-      {/* Console */}
       <ConsolePanel logs={logs} onClear={clearLogs} />
 
-      {/* ── Block warning modal (shown before any block action) ── */}
       {pendingBlockAction && (
         <div
           className="fixed inset-0 z-[100] overflow-y-auto px-3 py-4 sm:px-6 sm:py-6"
@@ -447,7 +421,6 @@ export default function App() {
               className="w-full max-w-[520px] max-h-[calc(100vh-2rem)] overflow-y-auto rounded-2xl p-5 sm:p-8"
               style={{ background: 'rgba(18,18,18,0.99)', outline: '1px solid rgba(244,67,54,0.2)', outlineOffset: '-1px', boxShadow: '0 24px 80px rgba(0,0,0,0.9)' }}
             >
-            {/* Header */}
             <div className="flex items-start gap-4 mb-6">
               <div
                 className="w-11 h-11 rounded-xl shrink-0 flex items-center justify-center"
@@ -463,7 +436,6 @@ export default function App() {
               </div>
             </div>
 
-            {/* Host requirement */}
             <div className="mb-4 p-4 rounded-xl" style={{ background: 'rgba(244,67,54,0.07)', border: '1px solid rgba(244,67,54,0.22)' }}>
               <p className="text-[13px] font-bold uppercase tracking-wider mb-2" style={{ color: '#F44336' }}>
                 You must be the lobby host
@@ -477,7 +449,6 @@ export default function App() {
               </p>
             </div>
 
-            {/* Additional notes */}
             <div className="mb-6 p-4 rounded-xl" style={{ background: 'rgba(255,152,0,0.06)', border: '1px solid rgba(255,152,0,0.18)' }}>
               <div className="flex items-center gap-2 mb-2">
                 <AlertTriangle className="w-3.5 h-3.5 shrink-0" style={{ color: '#FF9800' }} />
@@ -497,7 +468,6 @@ export default function App() {
               </ul>
             </div>
 
-            {/* VPN note */}
             <div className="mb-6 p-4 rounded-xl" style={{ background: 'rgba(181,121,255,0.06)', border: '1px solid rgba(181,121,255,0.18)' }}>
               <p className="text-[13px] font-bold uppercase tracking-wider mb-2" style={{ color: '#B579FF' }}>
                 Want to force a specific region?
@@ -510,7 +480,6 @@ export default function App() {
               </p>
             </div>
 
-            {/* Don't show again + actions */}
             <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
               <label className="flex items-center gap-2 cursor-pointer select-none group">
                 <input
@@ -543,10 +512,8 @@ export default function App() {
         </div>
       )}
 
-      {/* ── Splash screen ── */}
       {showSplash && <SplashScreen steps={initSteps} exiting={splashExiting} />}
 
-      {/* ── Exe Setup Modal ── */}
       {showExeSetupModal && (
         <div
           className="fixed inset-0 z-[100] flex items-center justify-center"
@@ -663,7 +630,6 @@ export default function App() {
         </div>
       )}
 
-      {/* ── Settings Modal ── */}
       {showSettings && (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center"
