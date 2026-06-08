@@ -1,0 +1,87 @@
+import { contextBridge, ipcRenderer } from 'electron'
+
+type LogEntry = {
+  id: string
+  timestamp: string
+  level: string
+  message: string
+}
+
+contextBridge.exposeInMainWorld('api', {
+  win: {
+    minimize:    () => ipcRenderer.send('win:minimize'),
+    maximize:    () => ipcRenderer.send('win:maximize'),
+    close:       () => ipcRenderer.send('win:close'),
+    isMaximized: () => ipcRenderer.invoke('win:isMaximized')
+  },
+
+  blockRegion:   (regionId: string) => ipcRenderer.invoke('block-region', regionId),
+  unblockRegion: (regionId: string) => ipcRenderer.invoke('unblock-region', regionId),
+  unblockAll:    () => ipcRenderer.invoke('unblock-all'),
+  getStatus:     () => ipcRenderer.invoke('get-status'),
+  getCidrCounts: () => ipcRenderer.invoke('get-cidr-counts'),
+  refreshIps:    () => ipcRenderer.invoke('refresh-ips'),
+  isAdmin:       () => ipcRenderer.invoke('is-admin'),
+  checkExePath:  () => ipcRenderer.invoke('check-exe-path'),
+
+  getExePath:  () => ipcRenderer.invoke('get-exe-path'),
+  setExePath:  (path: string) => ipcRenderer.invoke('set-exe-path', path),
+  browseExe:   () => ipcRenderer.invoke('browse-exe'),
+  autoDetectExe: () => ipcRenderer.invoke('auto-detect-exe'),
+  getAppVersion: () => ipcRenderer.invoke('get-app-version'),
+
+  getPermanentRegions: () => ipcRenderer.invoke('get-permanent-regions'),
+  markPermanent:       (regionId: string) => ipcRenderer.invoke('mark-permanent', regionId),
+  unmarkPermanent:     (regionId: string) => ipcRenderer.invoke('unmark-permanent', regionId),
+
+  pingRegion: (regionId: string) => ipcRenderer.invoke('ping-region', regionId),
+
+  getActiveConnections: () => ipcRenderer.invoke('get-active-connections'),
+  resetUdpMonitor:      () => ipcRenderer.invoke('reset-udp-monitor'),
+  startUdpTracker:      () => ipcRenderer.invoke('start-udp-tracker'),
+  stopUdpTracker:       () => ipcRenderer.invoke('stop-udp-tracker'),
+
+  checkFirewallHealth: () => ipcRenderer.invoke('check-firewall-health'),
+
+  checkForUpdate: () => ipcRenderer.invoke('check-for-update'),
+  downloadUpdate: () => ipcRenderer.invoke('download-update'),
+  installUpdate:  () => ipcRenderer.invoke('install-update'),
+
+  getServerStatus: () => ipcRenderer.invoke('get-server-status'),
+
+  sendBlockedCount: (count: number) => ipcRenderer.send('blocked-count-update', count),
+
+  onLog: (callback: (entry: LogEntry) => void) => {
+    const handler = (_: unknown, entry: LogEntry) => callback(entry)
+    ipcRenderer.on('log', handler)
+    return () => ipcRenderer.removeListener('log', handler)
+  },
+  onStatusChange: (callback: (regionId: string, blocked: boolean) => void) => {
+    const handler = (_: unknown, regionId: string, blocked: boolean) => callback(regionId, blocked)
+    ipcRenderer.on('status-change', handler)
+    return () => ipcRenderer.removeListener('status-change', handler)
+  },
+  onCidrCount: (callback: (regionId: string, count: number) => void) => {
+    const handler = (_: unknown, regionId: string, count: number) => callback(regionId, count)
+    ipcRenderer.on('cidr-count', handler)
+    return () => ipcRenderer.removeListener('cidr-count', handler)
+  },
+  onUnblockAllDone: (callback: () => void) => {
+    ipcRenderer.on('unblock-all-done', callback)
+    return () => ipcRenderer.removeListener('unblock-all-done', callback)
+  },
+  onUdpUpdate: (callback: (result: unknown) => void) => {
+    const handler = (_: unknown, result: unknown) => callback(result)
+    ipcRenderer.on('udp-update', handler)
+    return () => ipcRenderer.removeListener('udp-update', handler)
+  },
+  onUpdateDownloadProgress: (callback: (percent: number) => void) => {
+    const handler = (_: unknown, percent: number) => callback(percent)
+    ipcRenderer.on('update-download-progress', handler)
+    return () => ipcRenderer.removeListener('update-download-progress', handler)
+  },
+  onUpdateDownloaded: (callback: () => void) => {
+    ipcRenderer.on('update-downloaded', () => callback())
+    return () => ipcRenderer.removeAllListeners('update-downloaded')
+  }
+})
