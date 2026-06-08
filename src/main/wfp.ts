@@ -1,14 +1,3 @@
-/**
- * WFP (Windows Filtering Platform) direct API manager.
- *
- * Delegates to scripts/wfp-block.ps1 (embedded C# via Add-Type).
- * Maintains a state map (regionId -> WFP filter IDs) persisted to
- * userData/wfp-state.json so filters can be cleaned up across restarts.
- *
- * All WFP filters are created with FWPM_FILTER_FLAG_PERSISTENT so they
- * survive engine-handle close and OS reboots.
- */
-
 import { spawn } from 'child_process'
 import { join } from 'path'
 import { app } from 'electron'
@@ -18,7 +7,6 @@ import { getScriptPath as resolveScript } from './paths'
 
 export type LogEmitter = (level: string, message: string) => void
 
-// regionId -> WFP filter IDs (stored as strings: ulong can exceed JS safe integer)
 const blockedState = new Map<string, string[]>()
 let stateLoaded = false
 
@@ -38,7 +26,6 @@ async function loadState(): Promise<void> {
       if (Array.isArray(v) && v.length > 0) blockedState.set(k, v)
     }
   } catch {
-    // corrupt/missing state -> start fresh
   }
 }
 
@@ -48,7 +35,6 @@ async function saveState(): Promise<void> {
     for (const [k, v] of blockedState) data[k] = v
     await writeFile(statePath(), JSON.stringify(data), 'utf-8')
   } catch {
-    // ignore persistence failures
   }
 }
 

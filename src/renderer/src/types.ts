@@ -76,7 +76,6 @@ export interface TrackerResult {
   exitlagRunning: boolean
 }
 
-/** @deprecated use TrackerResult */
 export type ActiveConnectionsResult = TrackerResult
 
 export interface UpdateInfo {
@@ -117,7 +116,6 @@ export interface ElectronAPI {
     close:       () => void
     isMaximized: () => Promise<boolean>
   }
-  // Firewall
   blockRegion:   (regionId: string) => Promise<ActionResult>
   unblockRegion: (regionId: string) => Promise<ActionResult>
   unblockAll:    () => Promise<ActionResult>
@@ -126,35 +124,26 @@ export interface ElectronAPI {
   refreshIps:    () => Promise<{ added: number; removed: number }>
   isAdmin:       () => Promise<boolean>
   checkExePath:  () => Promise<ExeValidationResult>
-  // Settings: exe path
   getExePath:  () => Promise<string>
   setExePath:  (path: string) => Promise<ExeValidationResult>
   browseExe:   () => Promise<string | null>
   autoDetectExe: () => Promise<AutoDetectResult>
   getAppVersion: () => Promise<string>
-  // Settings: permanent regions
   getPermanentRegions: () => Promise<string[]>
   markPermanent:       (regionId: string) => Promise<void>
   unmarkPermanent:     (regionId: string) => Promise<void>
-  // Tray sync
   sendBlockedCount: (count: number) => void
-  // Ping
   pingRegion: (regionId: string) => Promise<PingResult>
-  // UDP tracker
   getActiveConnections: () => Promise<TrackerResult>
   resetUdpMonitor:      () => Promise<void>
   startUdpTracker:      () => Promise<void>
   stopUdpTracker:       () => Promise<void>
   onUdpUpdate: (callback: (result: TrackerResult) => void) => () => void
-  // WFP health check (console only)
   checkFirewallHealth: () => Promise<FirewallHealthResult>
-  // Auto-update
   checkForUpdate: () => Promise<UpdateInfo>
   downloadUpdate: () => Promise<void>
   installUpdate:  () => Promise<void>
-  // Server status (deadbyqueue)
   getServerStatus: () => Promise<ServerStatusResult>
-  // Events
   onLog:            (callback: (entry: LogEntry) => void) => () => void
   onStatusChange:   (callback: (regionId: string, blocked: boolean) => void) => () => void
   onCidrCount:      (callback: (regionId: string, count: number) => void) => () => void

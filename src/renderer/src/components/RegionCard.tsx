@@ -40,7 +40,6 @@ export function RegionCard({
     return '#F44336'
   }
 
-  // Live local clock for the region's timezone
   const [now, setNow] = useState(() => new Date())
   useEffect(() => {
     const id = setInterval(() => setNow(new Date()), 1000)
@@ -74,7 +73,6 @@ export function RegionCard({
     return `${region.pingMs}ms`
   }
 
-  // Card style
   const cardStyle = isBlocked
     ? {
         background:    isPermanent ? 'rgba(255, 152, 0, 0.06)' : 'rgba(244, 67, 54, 0.08)',
@@ -108,7 +106,6 @@ export function RegionCard({
       className="group relative flex flex-col rounded-2xl p-4 backdrop-blur-sm transition-all duration-300 hover:-translate-y-0.5 hover:opacity-100"
       style={cardStyle}
     >
-      {/* Top row: flag + status dot */}
       <div className="flex items-center justify-between mb-3">
         <FlagIcon
           code={region.countryCode}
@@ -117,7 +114,6 @@ export function RegionCard({
         />
 
         <div className="flex items-center gap-1.5">
-          {/* Backend badge */}
           {isBackend && (
             <span
               className="text-[9px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded"
@@ -127,7 +123,6 @@ export function RegionCard({
             </span>
           )}
 
-          {/* Matchmaking badge */}
           {isMatchmaking && !isBackend && (
             <span
               className="text-[9px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded"
@@ -137,7 +132,6 @@ export function RegionCard({
             </span>
           )}
 
-          {/* Permanent badge */}
           {isPermanent && isBlocked && (
             <span
               className="text-[9px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded"
@@ -162,22 +156,18 @@ export function RegionCard({
         </div>
       </div>
 
-      {/* Region ID */}
       <div className="text-[11px] font-bold text-white/30 tracking-[0.12em] mb-1.5 uppercase">
         {region.id}
       </div>
 
-      {/* Region name */}
       <div className="text-[18px] font-bold mb-1 gradient-title leading-tight tracking-[0.02em] uppercase">
         {region.name}
       </div>
 
-      {/* Country */}
       <div className="text-[13px] text-white/50 font-semibold mb-2 uppercase tracking-wide">
         {region.country}
       </div>
 
-      {/* Local clock */}
       <div className="flex items-baseline gap-2 mb-3">
         <span className="text-[16px] font-bold tabular-nums" style={{ color: 'rgba(255,255,255,0.75)', letterSpacing: '0.02em' }}>
           {localTime}
@@ -187,14 +177,12 @@ export function RegionCard({
         </span>
       </div>
 
-      {/* CIDR count */}
       {region.cidrCount > 0 && (
         <div className="text-[12px] text-white/25 mb-3">
           {region.cidrCount} IP ranges
         </div>
       )}
 
-      {/* Game server status (deadbyqueue) — distinct from firewall block status */}
       {serverInfo !== undefined && (
         <div
           className="mb-3 rounded-xl p-2.5 flex flex-col gap-2"
@@ -203,7 +191,6 @@ export function RegionCard({
             border: '1px solid rgba(255,255,255,0.07)',
           }}
         >
-          {/* Header row */}
           <div className="flex items-center justify-between">
             <span className="text-[11px] font-semibold text-white/35 tracking-wide">
               Game Server
@@ -227,7 +214,6 @@ export function RegionCard({
             </div>
           </div>
 
-          {/* Queue times */}
           {serverInfo.online && (serverInfo.killerQueue || serverInfo.survivorQueue) && (
             <div className="flex flex-col gap-1.5 mt-0.5">
               {serverInfo.killerQueue && (
@@ -257,7 +243,6 @@ export function RegionCard({
         </p>
       )}
 
-      {/* ── Bottom action area ── */}
       <div className="mt-auto">
         {isLoading ? (
           <div
@@ -326,7 +311,6 @@ export function RegionCard({
           </button>
         )}
 
-        {/* Permanent control */}
         {isBlocked && !isLoading && (
           isPermanent ? (
             <button
@@ -376,7 +360,6 @@ export function RegionCard({
           )
         )}
 
-        {/* Ping button */}
         {(
           <div className="relative mt-2 ping-btn-wrap">
             <button
@@ -392,7 +375,6 @@ export function RegionCard({
               <Wifi className="w-3.5 h-3.5" />
               {pingLabel()}
             </button>
-            {/* Tooltip */}
             <div
               className="ping-tooltip pointer-events-none absolute left-1/2 -translate-x-1/2 -top-8 opacity-0 transition-opacity duration-150 whitespace-nowrap px-2.5 py-1 rounded-lg text-[11px] font-semibold"
               style={{

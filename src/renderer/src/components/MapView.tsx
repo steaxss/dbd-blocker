@@ -5,7 +5,6 @@ import L from 'leaflet'
 import { Shield, ShieldOff, MousePointerClick, Wifi } from 'lucide-react'
 import { REGIONS, regionsByContinent, BACKEND_REGION_ID } from '../regions'
 
-/** Haversine distance in meters */
 function haversineMeters(lat1: number, lng1: number, lat2: number, lng2: number): number {
   const R = 6_371_000
   const dLat = ((lat2 - lat1) * Math.PI) / 180
@@ -109,7 +108,6 @@ export function MapView({
   const blockedCount  = regions.filter(r => r.status === 'blocked').length
   const activeCount = regions.filter(r => r.status === 'active').length
   const selectedCount = selected.size
-  // How many selected regions can actually be blocked (excludes backend)
   const blockableSelectedCount = [...selected].filter(id => id !== BACKEND_REGION_ID).length
 
   function handleBlockSelected() {
@@ -155,7 +153,6 @@ export function MapView({
   return (
     <div className="flex h-full">
 
-      {/* ── Map ── */}
       <div ref={mapDivRef} className="flex-1 relative" onMouseLeave={() => setHoveredRegion(null)}>
         <MapContainer
           center={[20, 15]}
@@ -171,7 +168,6 @@ export function MapView({
           />
           <MapEvents onInteract={() => setHoveredRegion(null)} />
 
-          {/* User location marker */}
           {userLocation && (
             <Marker
               position={[userLocation.lat, userLocation.lng]}
@@ -186,7 +182,6 @@ export function MapView({
             />
           )}
 
-          {/* Matchmaking area circle */}
           {userLocation && matchmakingRegions.length > 0 && (() => {
             const mmRegionDefs = REGIONS.filter(r => matchmakingRegions.includes(r.id))
             let maxDist = 0
@@ -194,7 +189,6 @@ export function MapView({
               const d = haversineMeters(userLocation.lat, userLocation.lng, r.lat, r.lng)
               if (d > maxDist) maxDist = d
             }
-            // Add 15% padding so dots sit inside the circle, minimum 500km
             const radius = Math.max(maxDist * 1.15, 500_000)
             return (
               <Circle
@@ -244,11 +238,9 @@ export function MapView({
                   mouseout: () => setHoveredRegion(null),
                 }}
               >
-                {/* Click popup — full detail */}
                 {(
                   <Popup autoPan={false} minWidth={230} maxWidth={290}>
                     <div style={{ padding: '14px 16px 12px', fontFamily: 'Poppins, sans-serif' }}>
-                      {/* Server ID */}
                       <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 8 }}>
                         <span style={{ fontFamily: 'Poppins, sans-serif', fontSize: 10, fontWeight: 800, color: 'rgba(181,121,255,0.9)', textTransform: 'uppercase', letterSpacing: '0.12em' }}>
                           {region.id}
@@ -260,7 +252,6 @@ export function MapView({
                         )}
                       </div>
 
-                      {/* Flag + city + country */}
                       <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10 }}>
                         <FlagIcon code={region.countryCode} style={{ width: 34, height: 'auto', borderRadius: 4, display: 'block', flexShrink: 0 }} fallback={region.flag} />
                         <div>
@@ -269,7 +260,6 @@ export function MapView({
                         </div>
                       </div>
 
-                      {/* Status */}
                       <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 10 }}>
                         <div style={{ width: 7, height: 7, borderRadius: '50%', background: statusColor, boxShadow: `0 0 6px ${statusColor}`, flexShrink: 0 }} />
                         <span style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.1em', color: statusColor }}>
@@ -282,7 +272,6 @@ export function MapView({
                         )}
                       </div>
 
-                      {/* Ping result */}
                       {state.pingMs !== undefined && (
                         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
                           <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.35)', fontFamily: 'Inter, sans-serif', fontWeight: 500 }}>Your ping on this server</span>
@@ -292,7 +281,6 @@ export function MapView({
                         </div>
                       )}
 
-                      {/* Game server status */}
                       {srv && (
                         <div style={{
                           marginBottom: 10,
@@ -335,9 +323,7 @@ export function MapView({
                         </div>
                       )}
 
-                      {/* Action buttons */}
                       <div style={{ display: 'flex', gap: 6, marginTop: 4 }}>
-                        {/* Block / Unblock */}
                         {state.status === 'blocked' ? (
                           <button
                             onClick={() => { onUnblock(region.id) }}
@@ -366,7 +352,6 @@ export function MapView({
                           </button>
                         )}
 
-                        {/* Ping button */}
                         <button
                           onClick={() => onPingRegion(region.id)}
                           disabled={state.pingLoading}
@@ -383,7 +368,6 @@ export function MapView({
           })}
         </MapContainer>
 
-        {/* Custom hover tooltip — React overlay, position fixed above marker */}
         {hoveredRegion && (() => {
           const hr  = REGIONS.find(r => r.id === hoveredRegion)
           if (!hr) return null
@@ -412,7 +396,6 @@ export function MapView({
                 maxWidth: 220,
               }}
             >
-              {/* Flag + name + local time on same row */}
               <div style={{ display: 'flex', alignItems: 'center', gap: 7, marginBottom: 5 }}>
                 <FlagIcon
                   code={hr.countryCode}
@@ -429,12 +412,10 @@ export function MapView({
                 </div>
               </div>
 
-              {/* Region ID */}
               <div style={{ fontWeight: 700, fontSize: 9, color: 'rgba(181,121,255,0.75)', textTransform: 'uppercase', letterSpacing: '0.1em', marginBottom: 6 }}>
                 {hr.id}
               </div>
 
-              {/* Game server status */}
               {hsrv && (
                 <div style={{
                   borderTop: '1px solid rgba(255,255,255,0.07)',
@@ -475,7 +456,6 @@ export function MapView({
                     </>
                   )}
 
-                  {/* Your ping — after game server block */}
                   {hstate && hstate.pingMs !== undefined && (
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 1 }}>
                       <span style={{ fontSize: 10, color: 'rgba(255,255,255,0.3)' }}>Your ping</span>
@@ -487,7 +467,6 @@ export function MapView({
                 </div>
               )}
 
-              {/* Your ping (no game server data) */}
               {!hsrv && hstate && hstate.pingMs !== undefined && (
                 <div style={{ borderTop: '1px solid rgba(255,255,255,0.07)', paddingTop: 6, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                   <span style={{ fontSize: 10, color: 'rgba(255,255,255,0.3)' }}>Your ping</span>
@@ -500,7 +479,6 @@ export function MapView({
           )
         })()}
 
-        {/* Map legend */}
         <div
           className="absolute bottom-4 left-4 z-[400] flex flex-col gap-1.5 px-3 py-2.5 rounded-xl"
           style={{ background: 'rgba(10,10,10,0.92)', border: '1px solid rgba(255,255,255,0.08)', backdropFilter: 'blur(8px)' }}
@@ -531,7 +509,6 @@ export function MapView({
           )}
         </div>
 
-        {/* Click hint */}
         {selectedCount === 0 && (
           <div
             className="absolute top-4 left-1/2 -translate-x-1/2 z-[400] flex items-center gap-2 px-3 py-1.5 rounded-full"
@@ -543,12 +520,10 @@ export function MapView({
         )}
       </div>
 
-      {/* ── Sidebar ── */}
       <div
         className="w-[272px] shrink-0 flex flex-col"
         style={{ background: 'rgba(12,12,12,0.98)', borderLeft: '1px solid rgba(255,255,255,0.06)' }}
       >
-        {/* Header */}
         <div className="px-4 pt-4 pb-3 border-b border-white/[0.05]">
           <div className="gradient-title text-[11px] font-bold uppercase tracking-[0.14em] mb-1">
             Server Map
@@ -560,7 +535,6 @@ export function MapView({
           </div>
         </div>
 
-        {/* Selection bar */}
         <div className="px-4 py-2.5 border-b border-white/[0.05] flex items-center justify-between">
           <span className="text-[10px] font-semibold uppercase tracking-wider text-white/35">
             {selectedCount > 0
@@ -587,11 +561,9 @@ export function MapView({
           </div>
         </div>
 
-        {/* Region list — grouped by continent */}
         <div className="flex-1 overflow-y-auto">
           {regionsByContinent.map(({ continent, regions: contRegions }) => (
             <div key={continent}>
-              {/* Continent header */}
               <div
                 className="px-4 py-1.5 text-[9px] font-bold uppercase tracking-[0.15em] sticky top-0"
                 style={{
@@ -625,7 +597,6 @@ export function MapView({
                     onMouseEnter={e => { if (!isSel) e.currentTarget.style.background = 'rgba(255,255,255,0.025)' }}
                     onMouseLeave={e => { if (!isSel) e.currentTarget.style.background = 'transparent' }}
                   >
-                    {/* Checkbox */}
                     <div
                       className="shrink-0 w-3.5 h-3.5 rounded flex items-center justify-center"
                       style={{
@@ -636,14 +607,12 @@ export function MapView({
                       {isSel && <div style={{ width: 5, height: 5, borderRadius: 1, background: '#B579FF' }} />}
                     </div>
 
-                    {/* Flag (SVG) */}
                     <FlagIcon
                       code={region.countryCode}
                       style={{ width: 18, height: 'auto', borderRadius: 2, display: 'block', flexShrink: 0 }}
                       fallback={region.flag}
                     />
 
-                    {/* Name + id */}
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-1.5">
                         <span className="text-[11px] font-bold text-white/75 truncate uppercase tracking-wide">
@@ -663,7 +632,6 @@ export function MapView({
                       </div>
                     </div>
 
-                    {/* Ping result + status dot */}
                     <div className="flex items-center gap-1.5 shrink-0">
                       {ping && (
                         <span
@@ -697,7 +665,6 @@ export function MapView({
           ))}
         </div>
 
-        {/* Action footer */}
         <div
           className="p-3 space-y-2"
           style={{ borderTop: '1px solid rgba(255,255,255,0.06)' }}

@@ -64,7 +64,6 @@ function CandidateRow({ c, isTop }: { c: TrackerCandidate; isTop: boolean }) {
         </div>
       </div>
 
-      {/* Score bar */}
       <div className="flex items-center gap-1.5 shrink-0">
         <div className="w-16 h-1 rounded-full overflow-hidden" style={{ background: 'rgba(255,255,255,0.06)' }}>
           <div className="h-full rounded-full" style={{ width: `${pct}%`, background: color }} />
@@ -80,7 +79,6 @@ export function ActiveConnections() {
   const [lastUpdate, setLastUpdate] = useState<Date | null>(null)
   const [enabled, setEnabled]       = useState(false)
 
-  // Subscribe to push events from main process
   useEffect(() => {
     const unsub = window.api.onUdpUpdate((data) => {
       setResult(data)
@@ -107,10 +105,8 @@ export function ActiveConnections() {
   return (
     <div className="flex h-full">
 
-      {/* ── Main panel ── */}
       <div className="flex-1 overflow-y-auto p-6 space-y-5">
 
-        {/* Enable/Disable toggle */}
         <div
           className="flex items-center gap-4 p-4 rounded-2xl"
           style={{
@@ -148,7 +144,6 @@ export function ActiveConnections() {
           </div>
         </div>
 
-        {/* ExitLag warning */}
         {enabled && result.exitlagRunning && (
           <div
             className="flex items-center gap-3 p-3 rounded-xl"
@@ -161,7 +156,6 @@ export function ActiveConnections() {
           </div>
         )}
 
-        {/* DBD status banner (only when tracker is enabled) */}
         {enabled && (
           <div
             className="flex items-center gap-4 p-4 rounded-2xl"
@@ -218,7 +212,6 @@ export function ActiveConnections() {
           </div>
         )}
 
-        {/* Current server (no block/unblock) */}
         {enabled && result.dbdRunning && result.current_server && (
           <section>
             <div className="text-[10px] font-bold uppercase tracking-[0.14em] text-white/30 mb-3">
@@ -260,7 +253,6 @@ export function ActiveConnections() {
           </section>
         )}
 
-        {/* Candidates / scoring table */}
         {enabled && result.dbdRunning && result.candidates.length > 0 && (
           <section>
             <div className="text-[10px] font-bold uppercase tracking-[0.14em] text-white/30 mb-3">
@@ -274,7 +266,6 @@ export function ActiveConnections() {
           </section>
         )}
 
-        {/* UDP sockets */}
         {enabled && result.dbdRunning && result.udpPorts.length > 0 && (
           <section>
             <div className="text-[10px] font-bold uppercase tracking-[0.14em] text-white/30 mb-2">
@@ -293,7 +284,6 @@ export function ActiveConnections() {
           </section>
         )}
 
-        {/* Empty state — DBD running but no connections yet */}
         {enabled && result.dbdRunning && !result.current_server && (
           <div
             className="flex flex-col items-center justify-center py-12 rounded-2xl text-center"
@@ -305,7 +295,6 @@ export function ActiveConnections() {
           </div>
         )}
 
-        {/* Disabled state */}
         {!enabled && (
           <div
             className="flex flex-col items-center justify-center py-16 rounded-2xl text-center"
@@ -320,7 +309,6 @@ export function ActiveConnections() {
         )}
       </div>
 
-      {/* ── Right info panel ── */}
       <div
         className="w-[220px] shrink-0 flex flex-col p-4 gap-4"
         style={{ borderLeft: '1px solid rgba(255,255,255,0.06)', background: 'rgba(12,12,12,0.98)' }}

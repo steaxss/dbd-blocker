@@ -1,42 +1,30 @@
 # DBD Server Blocker
 
-Windows desktop app for controlling which AWS regions `DeadByDaylight-Win64-Shipping.exe` can reach. It uses Windows Filtering Platform (WFP) filters scoped to the game executable, plus an ETW-based tracker for live server detection.
+DBD Server Blocker is a Windows desktop app for managing the AWS regions that `DeadByDaylight-Win64-Shipping.exe` can reach.
+
+It applies Windows Filtering Platform rules to the game executable, keeps AWS IPv4 ranges up to date locally, and shows live connection information while the game is running.
 
 <p align="center">
   <img src="resources/icon.png" alt="DBD Server Blocker" width="128">
 </p>
 
-## Status
+## Features
 
-Current state: release candidate for manual Windows 11 use, not fully production-certified.
+- Block or unblock individual Dead by Daylight server regions
+- Apply rules directly to the DBD executable
+- Keep selected regions blocked across app restarts
+- Refresh AWS IPv4 ranges from the official AWS endpoint
+- Check latency for each supported region
+- Show the observed live server region during a match
+- Manage active rules from the tray
 
-The app now builds cleanly, the WFP verification path is enforced, renderer-side failure handling is stronger, and the startup AWS refresh flow is safer. It is usable as an unsigned admin-only Windows tool, but I would still not label it "public production-grade" until it has been validated on real Windows 11 target machines across install, update, block, unblock, ETW tracking, and failure scenarios.
+`us-east-1` is kept available because DBD backend services rely on that region.
 
-## What The App Does
+## Matchmaking Detection
 
-- Blocks or unblocks individual AWS regions for Dead by Daylight
-- Scopes firewall filters to `DeadByDaylight-Win64-Shipping.exe`
-- Persists selected blocked regions across restarts
-- Fetches AWS IPv4 ranges and caches them locally
-- Measures region latency from the app
-- Detects the live game server region via ETW UDP tracing once connected
-- Runs in the system tray and can clean up non-permanent rules on exit
+Before a match starts, the app can estimate the likely matchmaking pool from location and latency signals.
 
-## Matchmaking Region Detection
-
-The app does not know the exact matchmaking region chosen by BHVR before a match starts.
-
-What it does today:
-
-- It estimates a likely matchmaking pool from browser geolocation or IP geolocation fallback
-- It then refines that estimate using ping latency to the known AWS/GameLift endpoints
-- The current logic picks the nearest or lowest-latency AWS region, then treats all regions on the same continent as the probable matchmaking pool
-
-What is exact:
-
-- Once DBD is connected, the ETW tracker can map the actual observed server IP to a known AWS region from the cached CIDR list
-
-So the pre-match signal is an estimate, while the in-match ETW signal is the real observed server region.
+During a match, the connection tracker reads local Windows network events and maps the observed server IP to the cached AWS region list.
 
 ## Supported Regions
 
@@ -51,44 +39,14 @@ So the pre-match signal is an estimate, while the in-match ETW signal is the rea
 | eu-west-1 | Dublin | sa-east-1 | Sao Paulo |
 | eu-west-2 | London | | |
 
-`us-east-1` is treated specially because the app assumes Dead by Daylight backend services depend on it.
-
-## Architecture
-
-- `src/main`: Electron main process, IPC, WFP/firewall integration, AWS IP fetch, settings, updater
-- `src/preload`: `window.api` bridge exposed to the renderer
-- `src/renderer`: React UI, map/grid views, logs, tracker UI, geolocation/ping logic
-- `scripts`: PowerShell scripts for WFP direct API access and ETW tracking
-
-## Current Validation
-
-The following checks pass locally:
-
-- `npm run typecheck`
-- `npm run build`
-- `npm run test`
-
-`npm run test` is currently a validation alias for type-check + build. There is still no dedicated automated runtime test suite.
-
 ## Requirements
 
 - Windows 10 or Windows 11
-- Administrator privileges
 - Dead by Daylight installed locally
-- PowerShell available
+- PowerShell 5+
+- Node.js 22.12+ for development
 
-## Packaging Notes
-
-- The app is intentionally unsigned
-- Administrator rights are required at runtime for WFP operations
-- The NSIS installer is configured for per-user install, but the application itself still requests elevation
-
-## Remaining Gaps Before Broad Public Distribution
-
-- No real automated runtime tests on Windows networking behavior
-- No CI pipeline proving packaging and smoke-test stability
-- Geolocation still depends on third-party services from the renderer
-- The app still needs real-machine validation for WFP failure, ETW tracker edge cases, and packaged update flow
+Windows may ask for elevation when applying or removing firewall rules.
 
 ## Development
 
@@ -97,16 +55,37 @@ npm install
 npm run dev
 npm run typecheck
 npm run build
+npm run test
+```
+
+`npm run test` runs the TypeScript checks and production build.
+
+## Security
+
+The dependency tree is maintained with `npm audit`.
+
+Current validation commands:
+
+```bash
+npm audit
+npm run test
+```
+
+## Packaging
+
+```bash
 npm run dist
 ```
 
-## Practical Verdict
+The Windows package is built with Electron Builder.
 
-If the question is "can I keep using this on my own Windows 11 machine and package it as an unsigned admin tool?", the answer is yes.
+## Project Structure
 
-If the question is "can I guarantee public production readiness with no surprises yet?", the answer is still no.
-
-The next step is not more architecture work. It is a Windows 11 validation pass on the packaged `.exe` covering install, first launch, WFP failure, region block/unblock, ETW detection, exit cleanup, and update behavior.
+- `src/main`: Electron main process, IPC, firewall integration, settings, updater
+- `src/preload`: secure renderer bridge
+- `src/renderer`: React UI, region views, logs, tracker UI, latency checks
+- `scripts`: PowerShell integration for Windows network filtering and tracking
+- `resources`: application icons
 
 ## License
 

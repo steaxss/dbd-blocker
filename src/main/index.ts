@@ -3,7 +3,6 @@ import { join } from 'path'
 import { unblockAll, getBlockedRegions } from './firewall'
 import { registerIpcHandlers } from './ipc'
 
-// Shared region IDs — imported by ipc.ts
 export const REGION_IDS = [
   'us-east-1', 'us-east-2', 'us-west-1', 'us-west-2', 'ca-central-1',
   'eu-central-1', 'eu-west-1', 'eu-west-2',
@@ -19,17 +18,10 @@ let blockedCount = 0
 
 const isDev = !!process.env.ELECTRON_RENDERER_URL
 
-// ---------------------------------------------------------------------------
-// Log emitter (before window exists)
-// ---------------------------------------------------------------------------
 
 function silentLog(_level: string, _message: string): void {
-  // Used before window is ready
 }
 
-// ---------------------------------------------------------------------------
-// Tray
-// ---------------------------------------------------------------------------
 
 function updateTrayTooltip(): void {
   if (!tray) return
@@ -72,7 +64,6 @@ function buildTrayMenu(): void {
     {
       label: 'Quit',
       click: () => {
-        // Show the main window then trigger close (which has the confirmation dialog)
         mainWindow?.show()
         mainWindow?.close()
       }
@@ -98,9 +89,6 @@ function createTray(): void {
   buildTrayMenu()
 }
 
-// ---------------------------------------------------------------------------
-// Main window
-// ---------------------------------------------------------------------------
 
 function createWindow(): void {
   mainWindow = new BrowserWindow({
@@ -120,7 +108,6 @@ function createWindow(): void {
     }
   })
 
-  // X button or Alt+F4 → show quit confirmation dialog
   mainWindow.on('close', async (e) => {
     if (isQuitting) return
     e.preventDefault()
@@ -144,7 +131,6 @@ function createWindow(): void {
         const toUnblock = REGION_IDS.filter(id => !protected_.has(id))
         await unblockAll(toUnblock, silentLog)
       } catch {
-        // Cleanup failed — exit anyway
       }
       mainWindow?.destroy()
       mainWindow = null
@@ -168,9 +154,6 @@ function createWindow(): void {
   }
 }
 
-// ---------------------------------------------------------------------------
-// IPC for tray sync + window controls
-// ---------------------------------------------------------------------------
 
 ipcMain.on('blocked-count-update', (_, count: number) => {
   blockedCount = count
@@ -178,7 +161,6 @@ ipcMain.on('blocked-count-update', (_, count: number) => {
   updateTrayTooltip()
 })
 
-// Minimize → hide to tray directly
 ipcMain.on('win:minimize', () => mainWindow?.hide())
 
 ipcMain.on('win:maximize', () => {
@@ -187,15 +169,11 @@ ipcMain.on('win:maximize', () => {
 })
 
 ipcMain.on('win:close', () => {
-  // Trigger the close event handler (which shows the confirmation dialog)
   mainWindow?.close()
 })
 
 ipcMain.handle('win:isMaximized', () => mainWindow?.isMaximized() ?? false)
 
-// ---------------------------------------------------------------------------
-// App lifecycle
-// ---------------------------------------------------------------------------
 
 app.whenReady().then(async () => {
   createWindow()
@@ -204,7 +182,6 @@ app.whenReady().then(async () => {
   if (mainWindow) {
     registerIpcHandlers(mainWindow)
 
-    // Set up electron-updater event forwarding to renderer
     const mod = await import('electron-updater')
     const autoUpdater = mod.autoUpdater ?? (mod.default as any)?.autoUpdater
     autoUpdater.autoDownload = false
@@ -233,7 +210,6 @@ app.on('before-quit', () => {
 })
 
 app.on('window-all-closed', () => {
-  // Keep alive in tray on Windows
 })
 
 app.on('activate', () => {

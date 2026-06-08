@@ -22,13 +22,10 @@ export function SplashScreen({ steps, exiting }: SplashScreenProps) {
         pointerEvents: exiting ? 'none' : 'all',
       }}
     >
-      {/* Background glows */}
       <div className="animated-bg" />
 
-      {/* Content */}
       <div className="relative z-10 w-[400px] no-drag">
 
-        {/* App name */}
         <div className="text-center mb-12">
           <h1 className="gradient-header text-[1.7rem] font-bold tracking-[0.14em] uppercase mb-3">
             DBD Server Blocker
@@ -38,13 +35,11 @@ export function SplashScreen({ steps, exiting }: SplashScreenProps) {
           </p>
         </div>
 
-        {/* Progress bar */}
         <div className="mb-8">
           <div
             className="relative h-[2px] rounded-full overflow-hidden"
             style={{ background: 'rgba(255,255,255,0.07)' }}
           >
-            {/* Fill */}
             <div
               className="absolute inset-y-0 left-0 rounded-full"
               style={{
@@ -54,7 +49,6 @@ export function SplashScreen({ steps, exiting }: SplashScreenProps) {
                 transition: 'width 0.4s cubic-bezier(0.4, 0, 0.2, 1)',
               }}
             />
-            {/* Shimmer — only while in progress */}
             {isActive && (
               <div
                 className="absolute inset-y-0"
@@ -68,7 +62,6 @@ export function SplashScreen({ steps, exiting }: SplashScreenProps) {
             )}
           </div>
 
-          {/* Percentage */}
           <div className="flex justify-end mt-1.5">
             <span
               className="text-[10px] font-mono transition-colors duration-300"
@@ -79,7 +72,6 @@ export function SplashScreen({ steps, exiting }: SplashScreenProps) {
           </div>
         </div>
 
-        {/* Steps */}
         <div className="space-y-3.5">
           {steps.map((step) => {
             const isDone    = step.status === 'done'
@@ -89,7 +81,6 @@ export function SplashScreen({ steps, exiting }: SplashScreenProps) {
 
             return (
               <div key={step.id} className="flex items-center gap-3">
-                {/* Icon */}
                 <div className="shrink-0 w-[18px] h-[18px] flex items-center justify-center">
                   {isDone ? (
                     <div
@@ -115,7 +106,6 @@ export function SplashScreen({ steps, exiting }: SplashScreenProps) {
                   )}
                 </div>
 
-                {/* Label */}
                 <span
                   className="flex-1 text-[12px] font-semibold transition-all duration-300"
                   style={{
@@ -128,7 +118,6 @@ export function SplashScreen({ steps, exiting }: SplashScreenProps) {
                   {step.label}
                 </span>
 
-                {/* Detail badge */}
                 {step.detail && (
                   <span
                     className="text-[10px] font-mono shrink-0 px-1.5 py-0.5 rounded"
