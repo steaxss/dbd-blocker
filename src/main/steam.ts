@@ -11,6 +11,19 @@ const DBD_EXE_RELATIVE = join(
   'DeadByDaylight-Win64-Shipping.exe'
 )
 
+const EPIC_EXE_RELATIVE = join(
+  'DeadByDaylight',
+  'DeadByDaylight',
+  'Binaries',
+  'EGS',
+  'DeadByDaylight-EGS-Shipping.exe'
+)
+
+const EPIC_INSTALL_ROOTS = [
+  'C:\\Program Files\\Epic Games',
+  'C:\\Program Files (x86)\\Epic Games',
+]
+
 export interface AutoDetectResult {
   found: boolean
   path?: string
@@ -47,7 +60,7 @@ function parseLibraryFoldersVdf(content: string): LibraryFolder[] {
   return folders
 }
 
-export function autoDetectDbdExePath(): AutoDetectResult {
+function detectSteamDbdExePath(): AutoDetectResult {
   const steamPath = readRegistryValue(
     'HKCU\\Software\\Valve\\Steam',
     'SteamPath'
@@ -105,5 +118,30 @@ export function autoDetectDbdExePath(): AutoDetectResult {
     }
   } catch {
     return { found: false, error: 'Failed to parse Steam library folders' }
+  }
+}
+
+function detectEpicDbdExePath(): AutoDetectResult {
+  for (const root of EPIC_INSTALL_ROOTS) {
+    const exePath = join(root, EPIC_EXE_RELATIVE)
+    if (existsSync(exePath)) {
+      return { found: true, path: exePath }
+    }
+  }
+  return { found: false, error: 'Dead by Daylight not found in Epic Games install folders' }
+}
+
+export function autoDetectDbdExePath(): AutoDetectResult {
+  const steam = detectSteamDbdExePath()
+  if (steam.found) return steam
+
+  const epic = detectEpicDbdExePath()
+  if (epic.found) return epic
+
+  return {
+    found: false,
+    error: steam.error && epic.error
+      ? `${steam.error}; ${epic.error}`
+      : steam.error ?? epic.error ?? 'Dead by Daylight not found via Steam or Epic',
   }
 }

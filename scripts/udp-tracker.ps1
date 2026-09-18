@@ -136,6 +136,7 @@ function Get-DbdProcess {
     $candidateNames = @(
         $DbdProcessName,
         'DeadByDaylight-Win64-Shipping',
+        'DeadByDaylight-EGS-Shipping',
         'DeadByDaylight-WinGDK-Shipping'
     ) | Where-Object { $_ } | Select-Object -Unique
 
