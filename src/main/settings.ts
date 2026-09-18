@@ -8,8 +8,12 @@ const DEFAULT_DBD_EXE =
 
 const SUPPORTED_DBD_EXES = {
   'deadbydaylight-win64-shipping.exe': {
-    channel: 'Steam / Epic Games',
+    channel: 'Steam',
     binaryDir: 'win64',
+  },
+  'deadbydaylight-egs-shipping.exe': {
+    channel: 'Epic Games',
+    binaryDir: 'egs',
   },
   'deadbydaylight-wingdk-shipping.exe': {
     channel: 'Microsoft Store / Xbox app',
@@ -106,7 +110,7 @@ export function validateExePath(path: string): ExeValidationResult {
   if (!expected) {
     return {
       ok: false,
-      error: `Select DeadByDaylight-Win64-Shipping.exe (Steam/Epic) or DeadByDaylight-WinGDK-Shipping.exe (Microsoft Store/Xbox), not "${basename}".`
+      error: `Select DeadByDaylight-Win64-Shipping.exe (Steam), DeadByDaylight-EGS-Shipping.exe (Epic), or DeadByDaylight-WinGDK-Shipping.exe (Microsoft Store/Xbox), not "${basename}".`
     }
   }
 

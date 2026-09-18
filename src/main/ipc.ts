@@ -2,6 +2,7 @@ import { ipcMain, BrowserWindow, dialog, app } from 'electron'
 import { spawn, ChildProcess } from 'child_process'
 import { createInterface } from 'readline'
 import { existsSync } from 'fs'
+import { basename } from 'path'
 import { getScriptPath } from './paths'
 import {
   blockRegion,
@@ -98,18 +99,26 @@ function getPsExe(): string {
   return existsSync(ps64) ? ps64 : 'powershell'
 }
 
-function startTracker(win: BrowserWindow, log: LogEmitter): void {
+async function startTracker(win: BrowserWindow, log: LogEmitter): Promise<void> {
   if (trackerProc) return
 
   const scriptPath = getScriptPath('etw-tracker.ps1')
+  const exePath = await getExePath()
+  const processName = basename(exePath).replace(/\.exe$/i, '') || 'DeadByDaylight-Win64-Shipping'
   const proc = spawn(
     getPsExe(),
-    ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', scriptPath],
+    [
+      '-NoProfile',
+      '-NonInteractive',
+      '-ExecutionPolicy', 'Bypass',
+      '-File', scriptPath,
+      '-DbdProcessName', processName,
+    ],
     { windowsHide: true }
   )
   trackerProc = proc
 
-  log('info', '[Tracker] ETW session starting...')
+  log('info', `[Tracker] ETW session starting (process=${processName})...`)
 
   const rl = createInterface({ input: proc.stdout! })
   rl.on('line', async (line) => {
@@ -332,9 +341,14 @@ export function registerIpcHandlers(win: BrowserWindow): void {
 
   ipcMain.handle('browse-exe', async () => {
     const currentPath = await getExePath()
-    const dir =
-      currentPath.split(/[/\\]/).slice(0, -1).join('\\') ||
-      'C:\\Program Files (x86)\\Steam\\steamapps\\common\\Dead by Daylight'
+    const currentDir = currentPath.split(/[/\\]/).slice(0, -1).join('\\')
+    const epicDir = 'C:\\Program Files\\Epic Games\\DeadByDaylight'
+    const steamDir = 'C:\\Program Files (x86)\\Steam\\steamapps\\common\\Dead by Daylight'
+    const dir = existsSync(currentDir)
+      ? currentDir
+      : existsSync(epicDir)
+        ? epicDir
+        : steamDir
     const result = await dialog.showOpenDialog(win, {
       title: 'Select Dead by Daylight Executable',
       defaultPath: existsSync(dir) ? dir : undefined,

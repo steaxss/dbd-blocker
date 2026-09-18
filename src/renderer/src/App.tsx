@@ -547,7 +547,12 @@ export default function App() {
                 <div className="flex items-center gap-2">
                   <span className="text-[11px] font-bold px-1.5 py-0.5 rounded" style={{ background: 'rgba(68,255,65,0.1)', color: '#44FF41', border: '1px solid rgba(68,255,65,0.25)' }}>✓</span>
                   <span className="text-[12px] font-mono text-white/70">DeadByDaylight-Win64-Shipping.exe</span>
-                  <span className="text-[11px] text-white/35 ml-auto">Steam / Epic</span>
+                  <span className="text-[11px] text-white/35 ml-auto">Steam</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="text-[11px] font-bold px-1.5 py-0.5 rounded" style={{ background: 'rgba(68,255,65,0.1)', color: '#44FF41', border: '1px solid rgba(68,255,65,0.25)' }}>✓</span>
+                  <span className="text-[12px] font-mono text-white/70">DeadByDaylight-EGS-Shipping.exe</span>
+                  <span className="text-[11px] text-white/35 ml-auto">Epic Games</span>
                 </div>
                 <div className="flex items-center gap-2">
                   <span className="text-[11px] font-bold px-1.5 py-0.5 rounded" style={{ background: 'rgba(68,255,65,0.1)', color: '#44FF41', border: '1px solid rgba(68,255,65,0.25)' }}>✓</span>
@@ -561,7 +566,9 @@ export default function App() {
                 </div>
               </div>
               <p className="text-[11px] font-mono text-white/25 mt-3 leading-relaxed">
-                Steam / Epic: ...\Dead by Daylight\DeadByDaylight\Binaries\Win64\DeadByDaylight-Win64-Shipping.exe
+                Steam: ...\Dead by Daylight\DeadByDaylight\Binaries\Win64\DeadByDaylight-Win64-Shipping.exe
+                <br />
+                Epic: ...\DeadByDaylight\DeadByDaylight\Binaries\EGS\DeadByDaylight-EGS-Shipping.exe
                 <br />
                 Microsoft Store / Xbox app: ...\Content\DeadByDaylight\Binaries\WinGDK\DeadByDaylight-WinGDK-Shipping.exe
               </p>
@@ -575,7 +582,7 @@ export default function App() {
                 spellCheck={false}
                 className="w-full px-4 py-2.5 rounded-xl text-[13px] font-mono text-white/80 outline-none mb-2"
                 style={{ background: 'rgba(255,255,255,0.06)', border: `1px solid ${exePathResult?.ok === false ? 'rgba(244,67,54,0.5)' : exePathResult?.ok ? 'rgba(68,255,65,0.35)' : 'rgba(255,255,255,0.12)'}` }}
-                placeholder="C:\...\DeadByDaylight-Win64-Shipping.exe or ...\DeadByDaylight-WinGDK-Shipping.exe"
+                placeholder="C:\...\DeadByDaylight-Win64-Shipping.exe, ...\DeadByDaylight-EGS-Shipping.exe, or ...\DeadByDaylight-WinGDK-Shipping.exe"
               />
               <div className="flex gap-2 mb-2">
                 <button
@@ -598,7 +605,7 @@ export default function App() {
               </div>
               {autoDetectResult && !autoDetectResult.found && (
                 <p className="text-[12px] mt-1.5 leading-relaxed" style={{ color: '#FF9800' }}>
-                  {autoDetectResult.error ?? 'Could not find Dead by Daylight via Steam'}
+                  {autoDetectResult.error ?? 'Could not find Dead by Daylight via Steam or Epic'}
                 </p>
               )}
               {autoDetectResult && autoDetectResult.found && (
@@ -657,7 +664,7 @@ export default function App() {
                 spellCheck={false}
                 className="w-full px-4 py-2.5 rounded-xl text-[13px] font-mono text-white/80 outline-none mb-2"
                 style={{ background: 'rgba(255,255,255,0.06)', border: `1px solid ${exePathResult?.ok === false ? 'rgba(244,67,54,0.5)' : exePathResult?.ok ? 'rgba(68,255,65,0.35)' : 'rgba(255,255,255,0.12)'}` }}
-                placeholder="C:\...\DeadByDaylight-Win64-Shipping.exe or ...\DeadByDaylight-WinGDK-Shipping.exe"
+                placeholder="C:\...\DeadByDaylight-Win64-Shipping.exe, ...\DeadByDaylight-EGS-Shipping.exe, or ...\DeadByDaylight-WinGDK-Shipping.exe"
               />
               <div className="flex gap-2 mb-2">
                 <button
@@ -680,7 +687,7 @@ export default function App() {
               </div>
               {autoDetectResult && !autoDetectResult.found && (
                 <p className="text-[12px] mt-1.5 leading-relaxed" style={{ color: '#FF9800' }}>
-                  {autoDetectResult.error ?? 'Could not find Dead by Daylight via Steam'}
+                  {autoDetectResult.error ?? 'Could not find Dead by Daylight via Steam or Epic'}
                 </p>
               )}
               {autoDetectResult && autoDetectResult.found && (
