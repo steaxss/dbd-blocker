@@ -5,6 +5,7 @@ import { Titlebar } from './components/Header'
 import { RegionGrid } from './components/RegionGrid'
 import { MapView } from './components/MapView'
 import { ActiveConnections } from './components/ActiveConnections'
+import { OverlayToolsPromo } from './components/OverlayToolsPromo'
 import { ConsolePanel } from './components/ConsolePanel'
 import { SplashScreen } from './components/SplashScreen'
 import { FlagIcon } from './components/FlagIcon'
@@ -393,6 +394,9 @@ export default function App() {
         ) : (
           <div className="h-full overflow-y-auto">
             <div className="mx-auto max-w-5xl px-6 py-5">
+              <div className="mb-6">
+                <OverlayToolsPromo variant="banner" />
+              </div>
               <RegionGrid
                 regions={regions}
                 permanentRegions={permanentRegions}

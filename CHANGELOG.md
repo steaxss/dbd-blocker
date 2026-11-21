@@ -15,7 +15,7 @@
 
 ### Added
 - **Blocking check**: the Active Connections tab counts every attempt of Dead by Daylight to reach a blocked region that Windows dropped (WFP drop log, read-only, no system setting changed). It proves blocks are effective, region by region.
-- DBD OverlayTools Premium card with a link to the Discord.
+- DBD OverlayTools Premium promotion (banner on the grid view, card on Active Connections) with a link to the Discord.
 
 ### Changed
 - The map no longer uses CARTO tiles, which now require an API key (the map showed "API key required"). The world map is drawn from embedded Natural Earth data (public domain): no API key, no third-party request exposing your IP, works offline. Country names are shown in English, with more labels as you zoom in.
