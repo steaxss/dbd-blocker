@@ -102,6 +102,20 @@
   }
 
   .leaflet-container { background: #0a0a0a !important; }
+  .country-label { pointer-events: none !important; }
+  .country-label span {
+    position: absolute;
+    transform: translate(-50%, -50%);
+    white-space: nowrap;
+    font-size: 9px;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: rgba(255, 255, 255, 0.26);
+    text-shadow: 0 0 3px #0a0a0a, 0 0 6px #0a0a0a;
+    user-select: none;
+  }
+  .country-label span.country-label-lg { font-size: 10.5px; letter-spacing: 0.14em; color: rgba(255, 255, 255, 0.3); }
 
   .leaflet-tooltip {
     background:    rgba(12,12,12,0.97) !important;

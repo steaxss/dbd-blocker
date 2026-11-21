@@ -14,7 +14,7 @@
 - WFP health check always reported error `0x00000000`.
 
 ### Changed
-- The map no longer uses CARTO tiles, which now require an API key (the map showed "API key required"). The world map is drawn from embedded Natural Earth data (public domain): no API key, no third-party request exposing your IP, works offline.
+- The map no longer uses CARTO tiles, which now require an API key (the map showed "API key required"). The world map is drawn from embedded Natural Earth data (public domain): no API key, no third-party request exposing your IP, works offline. Country names are shown in English, with more labels as you zoom in.
 - A dedicated WFP provider and sublayer own every filter. When the last block is removed, both are deleted, so nothing is left behind.
 - Changes are atomic: one WFP transaction per operation, verified afterwards.
 - WFP is the source of truth: `wfp-state.json` is gone.
