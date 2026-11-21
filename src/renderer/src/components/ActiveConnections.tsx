@@ -81,6 +81,14 @@ export function ActiveConnections() {
   const [lastUpdate, setLastUpdate] = useState<Date | null>(null)
   const [enabled, setEnabled]       = useState(false)
 
+  // The tracker lives in the main process: restore its state when this tab is shown again.
+  useEffect(() => {
+    window.api.getTrackerStatus().then(({ running, result }) => {
+      setEnabled(running)
+      if (running) { setResult(result); setLastUpdate(new Date()) }
+    }).catch(() => {})
+  }, [])
+
   useEffect(() => {
     const unsub = window.api.onUdpUpdate((data) => {
       setResult(data)

@@ -147,6 +147,7 @@ export interface ElectronAPI {
   sendBlockedCount: (count: number) => void
   pingRegion: (regionId: string) => Promise<PingResult>
   getActiveConnections: () => Promise<TrackerResult>
+  getTrackerStatus:     () => Promise<{ running: boolean; result: TrackerResult }>
   resetUdpMonitor:      () => Promise<void>
   startUdpTracker:      () => Promise<void>
   stopUdpTracker:       () => Promise<void>

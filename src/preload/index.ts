@@ -37,6 +37,7 @@ contextBridge.exposeInMainWorld('api', {
   pingRegion: (regionId: string) => ipcRenderer.invoke('ping-region', regionId),
 
   getActiveConnections: () => ipcRenderer.invoke('get-active-connections'),
+  getTrackerStatus:     () => ipcRenderer.invoke('get-tracker-status'),
   resetUdpMonitor:      () => ipcRenderer.invoke('reset-udp-monitor'),
   startUdpTracker:      () => ipcRenderer.invoke('start-udp-tracker'),
   stopUdpTracker:       () => ipcRenderer.invoke('stop-udp-tracker'),

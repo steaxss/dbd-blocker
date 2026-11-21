@@ -29,6 +29,7 @@ import { autoDetectDbdExePath } from './steam'
 import { pingRegion } from './ping'
 import {
   getTrackerState,
+  isTrackerRunning,
   invalidateRegionMatcher,
   resetTracker,
   startTracker,
@@ -223,6 +224,7 @@ export function registerIpcHandlers(win: BrowserWindow, log: LogEmitter, ready: 
   }))
 
   ipcMain.handle('get-active-connections', guard(() => getTrackerState()))
+  ipcMain.handle('get-tracker-status', guard(() => ({ running: isTrackerRunning(), result: getTrackerState() })))
   ipcMain.handle('reset-udp-monitor', guard(() => {
     resetTracker(trackerDeps)
     log('info', '[Tracker] Server cleared')
