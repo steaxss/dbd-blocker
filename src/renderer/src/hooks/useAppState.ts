@@ -364,11 +364,11 @@ export function useAppState() {
       })
     })
 
-    const unsubCidr = (window.api as any).onCidrCount?.((regionId: string, count: number) => {
+    const unsubCidr = window.api.onCidrCount((regionId, count) => {
       setRegions((prev) => prev.map((r) => (r.id === regionId ? { ...r, cidrCount: count } : r)))
     })
 
-    const unsubUnblockAll = (window.api as any).onUnblockAllDone?.(() => {
+    const unsubUnblockAll = window.api.onUnblockAllDone(() => {
       setRegions((prev) => {
         const next = prev.map((r) => ({ ...r, status: 'active' as const }))
         syncBlockedCount(next)
@@ -500,6 +500,7 @@ export function useAppState() {
       if (diff.added > 0) parts.push(`+${diff.added} new`)
       if (diff.removed > 0) parts.push(`-${diff.removed} removed`)
       addLog('success', parts.length > 0 ? `IP ranges updated: ${parts.join(', ')}` : 'IP ranges up to date -> no changes')
+      if (diff.resynced.length > 0) addLog('success', `Active blocks updated with the new ranges: ${diff.resynced.join(', ')}`)
     } catch (error) {
       addLog('error', `IP refresh failed: ${getErrorMessage(error)}`)
     }

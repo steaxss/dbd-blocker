@@ -1,6 +1,6 @@
 import 'leaflet/dist/leaflet.css'
 import { useState, useMemo, useCallback, useRef, useEffect } from 'react'
-import { MapContainer, TileLayer, Marker, Popup, Circle, useMapEvents } from 'react-leaflet'
+import { MapContainer, Marker, Popup, Circle, useMapEvents } from 'react-leaflet'
 import L from 'leaflet'
 import { Shield, ShieldOff, MousePointerClick, Wifi } from 'lucide-react'
 import { REGIONS, regionsByContinent, BACKEND_REGION_ID } from '../regions'
@@ -15,9 +15,11 @@ function haversineMeters(lat1: number, lng1: number, lat2: number, lng2: number)
   return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a))
 }
 import { FlagIcon } from './FlagIcon'
+import { BaseMap } from './BaseMap'
 import type { RegionState, ServerStatusMap } from '../types'
 
-const DARK_TILES = 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png'
+// The whole world fits at zoom 2; the vector basemap does not wrap, so keep the view inside it.
+const WORLD_BOUNDS: L.LatLngBoundsExpression = [[-85, -180], [85, 180]]
 
 function MapEvents({ onInteract }: { onInteract: () => void }) {
   useMapEvents({ zoomstart: onInteract, movestart: onInteract })
@@ -158,14 +160,15 @@ export function MapView({
           center={[20, 15]}
           zoom={2}
           minZoom={2}
+          maxZoom={6}
+          maxBounds={WORLD_BOUNDS}
+          maxBoundsViscosity={1}
+          preferCanvas
           style={{ height: '100%', width: '100%', background: '#0a0a0a' }}
           zoomControl={false}
           attributionControl={false}
         >
-          <TileLayer
-            url={DARK_TILES}
-            attribution='&copy; OpenStreetMap contributors &copy; CARTO'
-          />
+          <BaseMap />
           <MapEvents onInteract={() => setHoveredRegion(null)} />
 
           {userLocation && (

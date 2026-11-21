@@ -20,7 +20,7 @@ export interface AutoDetectResult {
 function readRegistryValue(key: string, value: string): string | null {
   try {
     const output = execFileSync(
-      'reg',
+      join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'reg.exe'),
       ['query', key, '/v', value],
       { encoding: 'utf-8', windowsHide: true }
     )

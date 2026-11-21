@@ -1,217 +1,185 @@
 import { app, BrowserWindow, Tray, Menu, nativeImage, ipcMain, shell, dialog } from 'electron'
 import { join } from 'path'
-import { unblockAll, getBlockedRegions } from './firewall'
-import { registerIpcHandlers } from './ipc'
-
-export const REGION_IDS = [
-  'us-east-1', 'us-east-2', 'us-west-1', 'us-west-2', 'ca-central-1',
-  'eu-central-1', 'eu-west-1', 'eu-west-2',
-  'ap-south-1', 'ap-east-1', 'ap-northeast-1', 'ap-northeast-2',
-  'ap-southeast-1', 'ap-southeast-2',
-  'sa-east-1'
-]
+import {
+  cleanupOnExit,
+  getBlockedCount,
+  getBlockedMap,
+  onBlockedChange,
+  reconcileOnStartup,
+  unblockAll,
+  type LogEmitter,
+} from './blocker'
+import { makeLogEmitter, registerIpcHandlers } from './ipc'
+import { stopEtwSession, stopTracker } from './tracker'
+import { wireUpdaterEvents } from './updater'
 
 let mainWindow: BrowserWindow | null = null
 let tray: Tray | null = null
-let isQuitting = false
-let blockedCount = 0
+let quitting: Promise<void> | null = null
+let log: LogEmitter = () => {}
 
 const isDev = !!process.env.ELECTRON_RENDERER_URL
+const EXIT_CLEANUP_TIMEOUT_MS = 20_000
 
-
-function silentLog(_level: string, _message: string): void {
+// Two instances would race on the same WFP objects and ETW session.
+if (!app.requestSingleInstanceLock()) {
+  app.exit(0)
 }
 
-
-function updateTrayTooltip(): void {
-  if (!tray) return
-  tray.setToolTip(
-    blockedCount > 0
-      ? `DBD Blocker — ${blockedCount} region${blockedCount > 1 ? 's' : ''} blocked`
-      : 'DBD Blocker — No active blocks'
-  )
-}
-
-function buildTrayMenu(): void {
-  if (!tray) return
-  const contextMenu = Menu.buildFromTemplate([
-    {
-      label: 'Show',
-      click: () => {
-        mainWindow?.show()
-        mainWindow?.focus()
-      }
-    },
-    {
-      label: blockedCount > 0
-        ? `${blockedCount} region${blockedCount > 1 ? 's' : ''} blocked`
-        : 'No active blocks',
-      enabled: false
-    },
-    { type: 'separator' },
-    {
-      label: 'Unblock All',
-      enabled: blockedCount > 0,
-      click: async () => {
-        await unblockAll(REGION_IDS, silentLog)
-        blockedCount = 0
-        buildTrayMenu()
-        updateTrayTooltip()
-        mainWindow?.webContents.send('unblock-all-done')
-      }
-    },
-    { type: 'separator' },
-    {
-      label: 'Quit',
-      click: () => {
-        mainWindow?.show()
-        mainWindow?.close()
-      }
-    }
-  ])
-  tray.setContextMenu(contextMenu)
-}
+app.on('second-instance', () => {
+  mainWindow?.show()
+  mainWindow?.focus()
+})
 
 function getIconPath(ext: 'png' | 'ico' = 'png'): string {
   return app.isPackaged
     ? join(process.resourcesPath, `icon.${ext}`)
-    : join(process.cwd(), `resources/icon.${ext}`)
+    : join(app.getAppPath(), 'resources', `icon.${ext}`)
+}
+
+function blockedLabel(count: number): string {
+  return count > 0 ? `${count} region${count > 1 ? 's' : ''} blocked` : 'No active blocks'
+}
+
+function refreshTray(): void {
+  if (!tray) return
+  const count = getBlockedCount()
+  tray.setToolTip(`DBD Blocker - ${blockedLabel(count)}`)
+  tray.setContextMenu(Menu.buildFromTemplate([
+    { label: 'Show', click: () => { mainWindow?.show(); mainWindow?.focus() } },
+    { label: blockedLabel(count), enabled: false },
+    { type: 'separator' },
+    {
+      label: 'Unblock All',
+      enabled: count > 0,
+      click: async () => {
+        await unblockAll(log)
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          for (const [id, blocked] of Object.entries(getBlockedMap())) mainWindow.webContents.send('status-change', id, blocked)
+          mainWindow.webContents.send('unblock-all-done')
+        }
+      },
+    },
+    { type: 'separator' },
+    { label: 'Quit', click: () => { mainWindow?.show(); mainWindow?.close() } },
+  ]))
 }
 
 function createTray(): void {
-  const icon = nativeImage.createFromPath(getIconPath()).resize({ width: 16, height: 16 })
-  tray = new Tray(icon)
-  tray.setToolTip('DBD Blocker')
-  tray.on('double-click', () => {
-    mainWindow?.show()
-    mainWindow?.focus()
-  })
-  buildTrayMenu()
+  tray = new Tray(nativeImage.createFromPath(getIconPath()).resize({ width: 16, height: 16 }))
+  tray.on('double-click', () => { mainWindow?.show(); mainWindow?.focus() })
+  refreshTray()
 }
 
+/**
+ * Single exit path: stop the tracker (closes the ETW session), remove non-permanent blocks and,
+ * when nothing permanent is left, the WFP provider/sublayer too. Bounded so a stuck BFE never hangs the quit.
+ */
+function quitWithCleanup(): Promise<void> {
+  if (quitting) return quitting
+  quitting = (async () => {
+    const cleanup = (async () => {
+      await stopTracker().catch(() => {})
+      await cleanupOnExit().catch(() => {})
+    })()
+    await Promise.race([cleanup, new Promise((r) => setTimeout(r, EXIT_CLEANUP_TIMEOUT_MS))])
+    tray?.destroy()
+    tray = null
+    mainWindow?.destroy()
+    mainWindow = null
+    app.exit(0)
+  })()
+  return quitting
+}
 
-function createWindow(): void {
-  mainWindow = new BrowserWindow({
+function createWindow(): BrowserWindow {
+  const win = new BrowserWindow({
     width: 1500,
     height: 950,
     minWidth: 1100,
     minHeight: 700,
     backgroundColor: '#09090b',
     frame: false,
+    show: false,
     icon: getIconPath('ico'),
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
+      webSecurity: true,
       devTools: isDev,
-    }
+    },
   })
 
-  mainWindow.on('close', async (e) => {
-    if (isQuitting) return
-    e.preventDefault()
+  win.once('ready-to-show', () => win.show())
 
-    const { response } = await dialog.showMessageBox(mainWindow!, {
+  win.on('close', async (e) => {
+    if (quitting) return
+    e.preventDefault()
+    const { response } = await dialog.showMessageBox(win, {
       type: 'question',
       buttons: ['Cancel', 'Quit'],
       defaultId: 1,
       cancelId: 0,
       title: 'DBD Server Blocker',
       message: 'Are you sure you want to exit?',
-      detail: 'Active firewall rules (excluding permanent ones) will be removed on exit.',
+      detail: 'Active blocks (except permanent ones) are removed on exit. No firewall object is left behind.',
     })
-
-    if (response === 1) {
-      isQuitting = true
-      try {
-        const { getPermanentRegions } = await import('./settings')
-        const permanent = await getPermanentRegions()
-        const protected_ = new Set(permanent)
-        const toUnblock = REGION_IDS.filter(id => !protected_.has(id))
-        await unblockAll(toUnblock, silentLog)
-      } catch {
-      }
-      mainWindow?.destroy()
-      mainWindow = null
-      app.exit(0)
-    }
+    if (response === 1) void quitWithCleanup()
   })
 
-  mainWindow.on('closed', () => {
-    mainWindow = null
-  })
+  win.on('closed', () => { mainWindow = null })
+  // Windows logoff / shutdown: best effort (non-permanent filters are not persistent and vanish on reboot anyway).
+  win.on('session-end', () => { void quitWithCleanup() })
 
-  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
-    shell.openExternal(url)
+  // Only http(s) links leave the app, and they open in the default browser.
+  win.webContents.setWindowOpenHandler(({ url }) => {
+    if (/^https?:\/\//i.test(url)) void shell.openExternal(url)
     return { action: 'deny' }
   })
+  win.webContents.on('will-navigate', (e, url) => {
+    const allowed = isDev && process.env.ELECTRON_RENDERER_URL && url.startsWith(process.env.ELECTRON_RENDERER_URL)
+    if (!allowed) e.preventDefault()
+  })
 
-  if (process.env.ELECTRON_RENDERER_URL) {
-    mainWindow.loadURL(process.env.ELECTRON_RENDERER_URL)
-  } else {
-    mainWindow.loadFile(join(__dirname, '../renderer/index.html'))
-  }
+  if (process.env.ELECTRON_RENDERER_URL) void win.loadURL(process.env.ELECTRON_RENDERER_URL)
+  else void win.loadFile(join(__dirname, '../renderer/index.html'))
+  return win
 }
 
-
-ipcMain.on('blocked-count-update', (_, count: number) => {
-  blockedCount = count
-  buildTrayMenu()
-  updateTrayTooltip()
-})
-
+// Kept for compatibility with the renderer; the main process is authoritative for the count.
+ipcMain.on('blocked-count-update', () => refreshTray())
 ipcMain.on('win:minimize', () => mainWindow?.hide())
-
 ipcMain.on('win:maximize', () => {
   if (mainWindow?.isMaximized()) mainWindow.unmaximize()
   else mainWindow?.maximize()
 })
-
-ipcMain.on('win:close', () => {
-  mainWindow?.close()
-})
-
+ipcMain.on('win:close', () => mainWindow?.close())
 ipcMain.handle('win:isMaximized', () => mainWindow?.isMaximized() ?? false)
 
-
-app.whenReady().then(async () => {
-  createWindow()
+app.whenReady().then(() => {
+  const win = createWindow()
+  mainWindow = win
+  log = makeLogEmitter(win)
   createTray()
+  onBlockedChange(() => refreshTray())
 
-  if (mainWindow) {
-    registerIpcHandlers(mainWindow)
-
-    const mod = await import('electron-updater')
-    const autoUpdater = mod.autoUpdater ?? (mod.default as any)?.autoUpdater
-    autoUpdater.autoDownload = false
-    autoUpdater.autoInstallOnAppQuit = false
-
-    autoUpdater.on('download-progress', (progress) => {
-      if (!mainWindow?.isDestroyed()) {
-        mainWindow!.webContents.send('update-download-progress', progress.percent)
-      }
-    })
-    autoUpdater.on('update-downloaded', () => {
-      if (!mainWindow?.isDestroyed()) {
-        mainWindow!.webContents.send('update-downloaded')
-      }
-    })
-  }
-
-  const status = await getBlockedRegions(REGION_IDS)
-  blockedCount = Object.values(status).filter(Boolean).length
-  buildTrayMenu()
-  updateTrayTooltip()
+  // Reconcile WFP state (legacy migration, crash leftovers, permanent re-sync) before the UI reads it.
+  const ready = reconcileOnStartup(log).catch((err) => {
+    log('error', `Startup firewall reconciliation failed: ${err instanceof Error ? err.message : String(err)}`)
+  })
+  registerIpcHandlers(win, log, ready)
+  void stopEtwSession()
+  wireUpdaterEvents(win)
 })
 
-app.on('before-quit', () => {
-  isQuitting = true
+// Any other quit request (auto-update install, tray, OS) goes through the same cleanup.
+app.on('before-quit', (e) => {
+  if (quitting) return
+  e.preventDefault()
+  void quitWithCleanup()
 })
 
-app.on('window-all-closed', () => {
-})
-
-app.on('activate', () => {
-  mainWindow?.show()
-})
+app.on('window-all-closed', () => { /* keep running in the tray */ })
+app.on('activate', () => mainWindow?.show())

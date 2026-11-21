@@ -63,12 +63,23 @@ export interface TrackerCandidate {
   lastSeen: number
   count: number
   regionId: string | null
+  /** regionId is an estimate (AWS relay located from public data). */
+  estimated?: boolean
 }
 
 export interface TrackerResult {
   dbdRunning: boolean
   current_server: string | null
+  currentIp: string | null
   currentRegion: string | null
+  /** The game is connected to a server inside a region that is currently blocked. */
+  blockedRegionHit: boolean
+  /** The game talks to an AWS GameLift relay: the real server region is hidden. */
+  viaRelay: boolean
+  /** Region of the relay, estimated from public geolocation data. */
+  estimatedRegion: string | null
+  /** Regions whose GameLift ping beacon the game contacted recently (matchmaking latency checks). */
+  pingedRegions: Array<{ region: string; blocked: boolean }>
   confidence: number
   candidates: TrackerCandidate[]
   udpPorts: number[]
@@ -77,6 +88,28 @@ export interface TrackerResult {
 }
 
 export type ActiveConnectionsResult = TrackerResult
+
+export interface RegionProof {
+  count: number
+  /** Attempts aimed at an AWS relay of the region: a match there was prevented. */
+  relayCount: number
+  lastAt: string
+  lastRemote: string
+}
+
+/** Dead by Daylight connection attempts dropped by the filters (WFP net events), per region. */
+export interface BlockProof {
+  available: boolean
+  regions: Record<string, RegionProof>
+  total: number
+}
+
+export interface RefreshIpsResult {
+  added: number
+  removed: number
+  /** Blocked regions whose filters were rebuilt because AWS ranges changed. */
+  resynced: string[]
+}
 
 export interface UpdateInfo {
   available: boolean
@@ -121,7 +154,7 @@ export interface ElectronAPI {
   unblockAll:    () => Promise<ActionResult>
   getStatus:     () => Promise<Record<string, boolean>>
   getCidrCounts: () => Promise<Record<string, number>>
-  refreshIps:    () => Promise<{ added: number; removed: number }>
+  refreshIps:    () => Promise<RefreshIpsResult>
   isAdmin:       () => Promise<boolean>
   checkExePath:  () => Promise<ExeValidationResult>
   getExePath:  () => Promise<string>
@@ -135,6 +168,11 @@ export interface ElectronAPI {
   sendBlockedCount: (count: number) => void
   pingRegion: (regionId: string) => Promise<PingResult>
   getActiveConnections: () => Promise<TrackerResult>
+  getTrackerStatus:     () => Promise<{ running: boolean; result: TrackerResult }>
+  getBlockProof:        () => Promise<BlockProof>
+  getBlockRelays:       () => Promise<boolean>
+  setBlockRelays:       (enabled: boolean) => Promise<{ ok: boolean }>
+  onBlockProof:         (callback: (proof: BlockProof) => void) => () => void
   resetUdpMonitor:      () => Promise<void>
   startUdpTracker:      () => Promise<void>
   stopUdpTracker:       () => Promise<void>

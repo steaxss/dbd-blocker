@@ -1,7 +1,8 @@
 import { app } from 'electron'
 import { join } from 'path'
-import { readFile, writeFile } from 'fs/promises'
 import { existsSync } from 'fs'
+import { readJson, writeJsonAtomic } from './fs-utils'
+import { isBlockableRegion } from './regions'
 
 const DEFAULT_DBD_EXE =
   'C:\\Program Files (x86)\\Steam\\steamapps\\common\\Dead by Daylight\\DeadByDaylight\\Binaries\\Win64\\DeadByDaylight-Win64-Shipping.exe'
@@ -17,9 +18,14 @@ const SUPPORTED_DBD_EXES = {
   },
 } as const
 
+/** Process names (without .exe) the tracker watches. */
+export const DBD_PROCESS_NAMES = ['DeadByDaylight-Win64-Shipping', 'DeadByDaylight-WinGDK-Shipping']
+
 interface AppSettings {
   exePath: string
   permanentRegions: string[]
+  /** Also block the AWS GameLift relays located in blocked regions (default on). */
+  blockRelays: boolean
 }
 
 let cache: AppSettings | null = null
@@ -31,27 +37,20 @@ function getSettingsPath(): string {
 async function getSettings(): Promise<AppSettings> {
   if (cache) return cache
   const path = getSettingsPath()
-  if (!existsSync(path)) {
-    cache = { exePath: DEFAULT_DBD_EXE, permanentRegions: [] }
-    return cache
+  const parsed = existsSync(path) ? await readJson<Partial<AppSettings>>(path) : null
+  cache = {
+    exePath: typeof parsed?.exePath === 'string' && parsed.exePath.trim() ? parsed.exePath : DEFAULT_DBD_EXE,
+    permanentRegions: Array.isArray(parsed?.permanentRegions)
+      ? [...new Set(parsed.permanentRegions.filter(isBlockableRegion))]
+      : [],
+    blockRelays: typeof parsed?.blockRelays === 'boolean' ? parsed.blockRelays : true,
   }
-  try {
-    const raw = await readFile(path, 'utf-8')
-    const parsed = JSON.parse(raw)
-    cache = {
-      exePath: typeof parsed.exePath === 'string' ? parsed.exePath : DEFAULT_DBD_EXE,
-      permanentRegions: Array.isArray(parsed.permanentRegions) ? parsed.permanentRegions : [],
-    }
-    return cache
-  } catch {
-    cache = { exePath: DEFAULT_DBD_EXE, permanentRegions: [] }
-    return cache
-  }
+  return cache
 }
 
 async function save(): Promise<void> {
   if (!cache) return
-  await writeFile(getSettingsPath(), JSON.stringify(cache, null, 2), 'utf-8')
+  await writeJsonAtomic(getSettingsPath(), cache)
 }
 
 export async function getExePath(): Promise<string> {
@@ -64,11 +63,22 @@ export async function setExePath(path: string): Promise<void> {
   await save()
 }
 
+export async function getBlockRelays(): Promise<boolean> {
+  return (await getSettings()).blockRelays
+}
+
+export async function setBlockRelaysSetting(enabled: boolean): Promise<void> {
+  const s = await getSettings()
+  s.blockRelays = enabled
+  await save()
+}
+
 export async function getPermanentRegions(): Promise<string[]> {
-  return (await getSettings()).permanentRegions
+  return [...(await getSettings()).permanentRegions]
 }
 
 export async function markPermanent(regionId: string): Promise<void> {
+  if (!isBlockableRegion(regionId)) return
   const s = await getSettings()
   if (!s.permanentRegions.includes(regionId)) {
     s.permanentRegions.push(regionId)
@@ -78,7 +88,7 @@ export async function markPermanent(regionId: string): Promise<void> {
 
 export async function unmarkPermanent(regionId: string): Promise<void> {
   const s = await getSettings()
-  s.permanentRegions = s.permanentRegions.filter(id => id !== regionId)
+  s.permanentRegions = s.permanentRegions.filter((id) => id !== regionId)
   await save()
 }
 
@@ -89,14 +99,17 @@ export interface ExeValidationResult {
 }
 
 export function validateExePath(path: string): ExeValidationResult {
-  if (!path || !path.trim()) {
+  if (typeof path !== 'string' || !path.trim()) {
     return { ok: false, error: 'Path cannot be empty' }
+  }
+  if (!/^[a-zA-Z]:[\\/]/.test(path) && !path.startsWith('\\\\')) {
+    return { ok: false, error: 'Path must be absolute' }
   }
   if (!path.toLowerCase().endsWith('.exe')) {
     return { ok: false, error: 'File must be an executable (.exe)' }
   }
   if (!existsSync(path)) {
-    return { ok: false, error: 'File not found — check the path and try again' }
+    return { ok: false, error: 'File not found. Check the path and try again' }
   }
   const parts = path.split(/[/\\]+/).filter(Boolean)
   const basename = parts.at(-1) ?? ''

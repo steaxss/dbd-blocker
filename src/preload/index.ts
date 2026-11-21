@@ -37,6 +37,15 @@ contextBridge.exposeInMainWorld('api', {
   pingRegion: (regionId: string) => ipcRenderer.invoke('ping-region', regionId),
 
   getActiveConnections: () => ipcRenderer.invoke('get-active-connections'),
+  getTrackerStatus:     () => ipcRenderer.invoke('get-tracker-status'),
+  getBlockProof:        () => ipcRenderer.invoke('get-block-proof'),
+  getBlockRelays:       () => ipcRenderer.invoke('get-block-relays'),
+  setBlockRelays:       (enabled: boolean) => ipcRenderer.invoke('set-block-relays', enabled),
+  onBlockProof: (callback: (proof: unknown) => void) => {
+    const handler = (_: unknown, proof: unknown) => callback(proof)
+    ipcRenderer.on('block-proof', handler)
+    return () => ipcRenderer.removeListener('block-proof', handler)
+  },
   resetUdpMonitor:      () => ipcRenderer.invoke('reset-udp-monitor'),
   startUdpTracker:      () => ipcRenderer.invoke('start-udp-tracker'),
   stopUdpTracker:       () => ipcRenderer.invoke('stop-udp-tracker'),

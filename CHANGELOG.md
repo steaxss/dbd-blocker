@@ -1,0 +1,40 @@
+# Changelog
+
+## 1.4.0
+
+### Fixed
+- **Blocked regions could still be reached (Seoul and other regions).** A block kept the AWS ranges that existed when it was created. AWS adds EC2 ranges every week (e.g. +2 in `ap-northeast-2` and +31 in `us-east-1` between July and November 2026), and new GameLift servers landed outside the block. Active blocks are now re-synced on every AWS refresh (at startup and every 6 hours).
+- IPv6 was never blocked. Every region now blocks its EC2 IPv6 ranges too.
+- Inbound flows were not covered. Filters now cover `ALE_AUTH_RECV_ACCEPT` as well as `ALE_AUTH_CONNECT`.
+- Removing a filter that was already gone counted as a failure (wrong `FWP_E_FILTER_NOT_FOUND` constant).
+- Unblock could forget filters it had failed to delete, leaving them active and invisible in the UI.
+- Non-permanent blocks survived a crash, a forced shutdown or an update restart. They no longer persist across reboots, and leftovers are removed at the next start.
+- The tracker ignored every received UDP packet and never saw IPv6. Events are now matched by ID: UDP 42/43/58/59.
+- The ETW session stayed active after the tracker was killed. It is now closed on stop, on app exit and if the app crashes.
+- WFP health check always reported error `0x00000000`.
+
+### Added
+- **Block AWS relays** (setting, on by default): since 2026 matches go through Amazon GameLift relays that region blocks did not cover, which is how players ended up in blocked regions again. Blocking a region now also blocks the relays located there (estimated location, see `relay-locations.json`). Blocking check shows the attempts aimed at a relay.
+- **Blocking check**: the Active Connections tab counts every attempt of Dead by Daylight to reach a blocked region that Windows dropped (WFP drop log, read-only, no system setting changed). It proves blocks are effective, region by region.
+- DBD OverlayTools Premium promotion (banner on the grid view, card on Active Connections) with a link to the Discord.
+
+### Changed
+- The map no longer uses CARTO tiles, which now require an API key (the map showed "API key required"). The world map is drawn from embedded Natural Earth data (public domain): no API key, no third-party request exposing your IP, works offline. Country names are shown in English, with more labels as you zoom in.
+- A dedicated WFP provider and sublayer own every filter. When the last block is removed, both are deleted, so nothing is left behind.
+- Changes are atomic: one WFP transaction per operation, verified afterwards.
+- WFP is the source of truth: `wfp-state.json` is gone.
+- Filters clear the action right so VPN / booster callouts in lower sublayers cannot override them.
+- Uninstalling purges the filters, sublayer, provider, ETW session and app data.
+- Filters, sublayer and `ips/` cache from 1.1–1.3, plus 1.0 firewall rules (`Block_DBD_*`), are migrated automatically.
+- Ping uses the GameLift UDP beacons (`gamelift-ping.<region>.api.aws:7770`), including Hong Kong.
+- The tracker warns when the game is connected to a blocked region, or to an IP outside AWS.
+- The tracker recognizes Amazon GameLift relays (EC2 ranges published with region `GLOBAL`, used by GameLift Player Gateway / DDoS protection since 2026) instead of reporting them as unknown hosts. The real server region cannot be read from a relay IP, so the tracker estimates it from the relay location (104 relay blocks located from public routing + geolocation data, see `tools/generate-relay-locations.mjs`) and labels it as an estimate.
+- PowerShell, `net`, `reg` and `logman` are called by absolute path, never through `PATH`.
+- IPC handlers validate their input and only answer the main window.
+- The app runs as a single instance.
+- Settings and cache are written atomically.
+- Removed code obfuscation (the project is open source): production builds are now identical to dev builds, readable in crash reports and less prone to antivirus false positives.
+- Removed the unused `udp-tracker.ps1` and dead code.
+- Tracker: GameLift ping beacons (UDP 7770) are shown as matchmaking pings, flagged when the region is blocked, instead of being reported as the game server.
+- Active Connections: removed the scoring formulas and technical panels, the tracker toggle survives tab changes, and the page says when the region is hidden behind a GameLift relay.
+- Added unit tests (vitest).

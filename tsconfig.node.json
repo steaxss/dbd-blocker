@@ -1,21 +1,33 @@
 {
   "include": [
     "electron.vite.config.*",
+    "vitest.config.*",
     "src/main/**/*",
-    "src/preload/**/*"
+    "src/preload/**/*",
+    "tests/**/*",
+    "src/main/**/*.json"
   ],
   "compilerOptions": {
     "composite": true,
     "target": "ES2022",
-    "module": "CommonJS",
+    "module": "ESNext",
     "moduleResolution": "bundler",
     "strict": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noFallthroughCasesInSwitch": true,
     "esModuleInterop": true,
     "skipLibCheck": true,
-    "types": ["node", "electron-vite/node"],
+    "types": [
+      "node",
+      "electron-vite/node"
+    ],
     "baseUrl": ".",
     "paths": {
-      "@main/*": ["src/main/*"]
-    }
+      "@main/*": [
+        "src/main/*"
+      ]
+    },
+    "resolveJsonModule": true
   }
 }

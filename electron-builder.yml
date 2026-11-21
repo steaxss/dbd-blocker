@@ -22,6 +22,10 @@ nsis:
   oneClick: false
   perMachine: false
   allowToChangeInstallationDirectory: true
+  # Purges WFP filters / sublayer / provider and the ETW session on uninstall (not on update).
+  include: resources/installer.nsh
+  # Settings and AWS range cache: nothing left in %APPDATA% after uninstall.
+  deleteAppDataOnUninstall: true
 
 win:
   target:
