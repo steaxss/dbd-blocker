@@ -35,5 +35,6 @@
 - Settings and cache are written atomically.
 - Removed code obfuscation (the project is open source): production builds are now identical to dev builds, readable in crash reports and less prone to antivirus false positives.
 - Removed the unused `udp-tracker.ps1` and dead code.
+- Tracker: GameLift ping beacons (UDP 7770) are shown as matchmaking pings, flagged when the region is blocked, instead of being reported as the game server.
 - Active Connections: removed the scoring formulas and technical panels, the tracker toggle survives tab changes, and the page says when the region is hidden behind a GameLift relay.
 - Added unit tests (vitest).

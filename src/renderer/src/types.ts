@@ -78,6 +78,8 @@ export interface TrackerResult {
   viaRelay: boolean
   /** Region of the relay, estimated from public geolocation data. */
   estimatedRegion: string | null
+  /** Regions whose GameLift ping beacon the game contacted recently (matchmaking latency checks). */
+  pingedRegions: Array<{ region: string; blocked: boolean }>
   confidence: number
   candidates: TrackerCandidate[]
   udpPorts: number[]

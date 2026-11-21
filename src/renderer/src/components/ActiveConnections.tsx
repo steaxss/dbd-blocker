@@ -8,7 +8,7 @@ import type { TrackerResult, TrackerCandidate, BlockProof } from '../types'
 const RELAY_REGION = 'aws-relay'
 
 const EMPTY: TrackerResult = {
-  dbdRunning: false, current_server: null, currentIp: null, currentRegion: null, blockedRegionHit: false, viaRelay: false, estimatedRegion: null,
+  dbdRunning: false, current_server: null, currentIp: null, currentRegion: null, blockedRegionHit: false, viaRelay: false, estimatedRegion: null, pingedRegions: [],
   confidence: 0, candidates: [], udpPorts: [], dbdPid: 0, exitlagRunning: false,
 }
 
@@ -263,6 +263,31 @@ export function ActiveConnections({ blockedRegionIds }: { blockedRegionIds: stri
               <RotateCcw className="w-3.5 h-3.5" />
             </button>
           </div>
+        )}
+
+        {enabled && result.dbdRunning && (result.pingedRegions ?? []).length > 0 && (
+          <section>
+            <div className="text-[10px] font-bold uppercase tracking-[0.14em] text-white/30 mb-2">Matchmaking pings</div>
+            <div className="flex flex-wrap gap-1.5 mb-1.5">
+              {result.pingedRegions.map(({ region: id, blocked }) => {
+                const r = regionInfo(id)
+                return (
+                  <span key={id} className="inline-flex items-center gap-1.5 text-[11px] font-semibold px-2 py-1 rounded-lg"
+                    style={blocked
+                      ? { background: 'rgba(244,67,54,0.08)', border: '1px solid rgba(244,67,54,0.3)', color: '#F44336' }
+                      : { background: 'rgba(90,200,255,0.06)', border: '1px solid rgba(90,200,255,0.18)', color: 'rgba(255,255,255,0.7)' }}
+                    title={blocked ? 'Ping dropped: the game sees this region as unreachable' : 'Ping reached the region'}>
+                    {r && <FlagIcon code={r.countryCode} style={{ width: 14, height: 'auto', borderRadius: 2 }} fallback={r.flag} />}
+                    {r?.name ?? id}
+                    {blocked && <ShieldCheck className="w-3 h-3" />}
+                  </span>
+                )
+              })}
+            </div>
+            <div className="text-[10px] text-white/30">
+              Regions the game measured its latency to while searching. Pings toward blocked regions (red) are dropped, so the game sees them as unreachable.
+            </div>
+          </section>
         )}
 
         {enabled && result.dbdRunning && result.current_server && (

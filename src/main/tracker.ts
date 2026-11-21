@@ -39,6 +39,8 @@ export interface TrackerResult {
   viaRelay: boolean
   /** Region of the relay, estimated from public geolocation data (relays sit next to the game servers). */
   estimatedRegion: string | null
+  /** Regions whose GameLift ping beacon the game contacted recently (matchmaking latency checks). */
+  pingedRegions: Array<{ region: string; blocked: boolean }>
   confidence: number
   candidates: Array<{ ip: string; port: number; score: number; lastSeen: number; count: number; regionId: string | null; estimated?: boolean }>
   udpPorts: number[]
@@ -47,7 +49,7 @@ export interface TrackerResult {
 }
 
 export const EMPTY_TRACKER: TrackerResult = {
-  dbdRunning: false, current_server: null, currentIp: null, currentRegion: null, blockedRegionHit: false, viaRelay: false, estimatedRegion: null,
+  dbdRunning: false, current_server: null, currentIp: null, currentRegion: null, blockedRegionHit: false, viaRelay: false, estimatedRegion: null, pingedRegions: [],
   confidence: 0, candidates: [], udpPorts: [], dbdPid: 0, exitlagRunning: false,
 }
 
@@ -62,6 +64,10 @@ let last: TrackerResult = { ...EMPTY_TRACKER }
 let matcher: CidrMatcher | null = null
 let lastUnknownIp: string | null = null
 let lastLeakKey: string | null = null
+/** Regions the game pinged recently (GameLift beacons, matchmaking latency), with the last time seen. */
+const pinged = new Map<string, number>()
+const BEACON_PORT = 7770
+const PING_MEMORY_MS = 10 * 60 * 1000
 
 export function getTrackerState(): TrackerResult {
   return last
@@ -96,36 +102,54 @@ async function handleLine(line: string, deps: TrackerDeps): Promise<void> {
   }
 
   if (!data.dbdRunning) {
-    if (last.dbdRunning) lastLeakKey = null
+    if (last.dbdRunning) { lastLeakKey = null; pinged.clear() }
     last = { ...EMPTY_TRACKER, exitlagRunning: data.exitlagRunning ?? false }
     deps.emit(last)
     return
   }
 
   const m = await getMatcher()
-  const candidates = (data.candidates ?? []).map((c) => {
+  const all = (data.candidates ?? []).map((c) => {
     const regionId = m.match(c.ip)
     const estimate = regionId === RELAY_REGION ? estimateRelayRegion(c.ip) : null
-    return { ip: c.ip, port: c.port, score: c.score, lastSeen: c.lastSeen, count: c.count, regionId: estimate ?? regionId, estimated: !!estimate }
+    return { ip: c.ip, port: c.port, score: c.score, lastSeen: c.lastSeen, count: c.count, regionId: estimate ?? regionId, estimated: !!estimate, rawRegion: regionId }
   })
-  const currentIp = data.currentIp ?? null
+
+  // UDP 7770 to a regional range = GameLift ping beacon: the game measuring its latency to a region
+  // (matchmaking), not the game server.
+  const now = Date.now()
+  for (const c of all) {
+    if (c.port !== BEACON_PORT || !c.rawRegion || c.rawRegion === RELAY_REGION) continue
+    if (!pinged.has(c.rawRegion)) deps.log('info', `[Tracker] Matchmaking ping to ${c.rawRegion} (GameLift beacon ${c.ip})`)
+    pinged.set(c.rawRegion, now)
+  }
+  for (const [region, at] of pinged) if (now - at > PING_MEMORY_MS) pinged.delete(region)
+
+  const candidates = all
+    .filter((c) => !(c.port === BEACON_PORT && c.rawRegion && c.rawRegion !== RELAY_REGION))
+    .map(({ rawRegion: _raw, ...c }) => c)
+  const top = candidates[0] ?? null
+  const currentIp = top?.ip ?? null
+  const currentServer = top ? (top.ip.includes(':') ? `[${top.ip}]:${top.port}` : `${top.ip}:${top.port}`) : null
   const matched = currentIp ? m.match(currentIp) : null
   const viaRelay = matched === RELAY_REGION
   const currentRegion = viaRelay ? null : matched
   const estimatedRegion = viaRelay && currentIp ? estimateRelayRegion(currentIp) : null
   const effectiveRegion = currentRegion ?? estimatedRegion
   const blockedRegionHit = !!effectiveRegion && deps.isBlocked(effectiveRegion)
+  const confidence = !top ? 0 : candidates.length === 1 ? top.score : Math.min(1, top.score + (top.score - candidates[1].score) * 0.5)
   const prev = last
 
   last = {
     dbdRunning: true,
-    current_server: data.current_server ?? null,
+    current_server: currentServer,
     currentIp,
     currentRegion,
     blockedRegionHit,
     viaRelay,
     estimatedRegion,
-    confidence: data.confidence ?? 0,
+    pingedRegions: [...pinged.keys()].map((region) => ({ region, blocked: deps.isBlocked(region) })),
+    confidence,
     candidates,
     udpPorts: data.udpPorts ?? [],
     dbdPid: data.dbdPid ?? 0,
@@ -133,25 +157,25 @@ async function handleLine(line: string, deps: TrackerDeps): Promise<void> {
   }
 
   if (currentRegion && currentRegion !== prev.currentRegion) {
-    deps.log('success', `[Tracker] Game server: ${currentRegion} (${data.current_server}) confidence=${Math.round(last.confidence * 100)}%`)
+    deps.log('success', `[Tracker] Game server: ${currentRegion} (${currentServer}) confidence=${Math.round(confidence * 100)}%`)
   }
   if (estimatedRegion && estimatedRegion !== prev.estimatedRegion) {
-    deps.log('success', `[Tracker] Game server: probably ${estimatedRegion} (via AWS relay ${data.current_server}, location estimated)`)
+    deps.log('success', `[Tracker] Game server: probably ${estimatedRegion} (via AWS relay ${currentServer}, location estimated)`)
   }
-  if (currentIp && !currentRegion && !estimatedRegion && last.confidence >= 0.6 && currentIp !== lastUnknownIp) {
+  if (currentIp && !currentRegion && !estimatedRegion && confidence >= 0.6 && currentIp !== lastUnknownIp) {
     lastUnknownIp = currentIp
     if (viaRelay) {
-      deps.log('warning', `[Tracker] Game traffic goes through an AWS GameLift relay (${data.current_server}, AWS range "GLOBAL"): the real server region cannot be read from this IP`)
+      deps.log('warning', `[Tracker] Game traffic goes through an AWS GameLift relay (${currentServer}) whose location is unknown: the server region cannot be estimated`)
     } else {
-      deps.log('warning', `[Tracker] Game server ${data.current_server} is not in any AWS range (VPN, routing tool or non-AWS host)`)
+      deps.log('warning', `[Tracker] Game server ${currentServer} is not in any AWS range (VPN, routing tool or non-AWS host)`)
     }
   }
   const leakKey = blockedRegionHit ? `${effectiveRegion}|${currentIp}` : null
-  if (leakKey && leakKey !== lastLeakKey && last.confidence >= 0.6) {
+  if (leakKey && leakKey !== lastLeakKey && confidence >= 0.6) {
     if (currentRegion) {
       deps.log('error', `[Tracker] Connected to ${currentRegion} although it is blocked. The game was probably started before the block: restart Dead by Daylight. If it persists, run Refresh IPs.`)
     } else {
-      deps.log('error', `[Tracker] Matched in ${effectiveRegion} (estimated) although it is blocked: the match goes through an AWS GameLift relay, which region blocks cannot cover.`)
+      deps.log('error', `[Tracker] Matched in ${effectiveRegion} (estimated, via AWS relay) although it is blocked. Restart Dead by Daylight and check that "Block AWS relays" is enabled in Settings.`)
     }
   }
   lastLeakKey = leakKey
