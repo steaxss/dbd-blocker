@@ -4,7 +4,8 @@
     "vitest.config.*",
     "src/main/**/*",
     "src/preload/**/*",
-    "tests/**/*"
+    "tests/**/*",
+    "src/main/**/*.json"
   ],
   "compilerOptions": {
     "composite": true,
@@ -17,10 +18,16 @@
     "noFallthroughCasesInSwitch": true,
     "esModuleInterop": true,
     "skipLibCheck": true,
-    "types": ["node", "electron-vite/node"],
+    "types": [
+      "node",
+      "electron-vite/node"
+    ],
     "baseUrl": ".",
     "paths": {
-      "@main/*": ["src/main/*"]
-    }
+      "@main/*": [
+        "src/main/*"
+      ]
+    },
+    "resolveJsonModule": true
   }
 }

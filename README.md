@@ -60,6 +60,14 @@ npm run test:unit   # vitest
 npm test            # typecheck + unit tests + production build
 ```
 
+## Relay locations
+
+Since 2026, Amazon GameLift routes matches through relays (DDoS protection) whose IPs are published as `GLOBAL` and hide the server region. `src/main/relay-locations.json` maps relay blocks to AWS regions from public data (RIPEstat routing + ipinfo.io geolocation). Regenerate it from time to time:
+
+```bash
+node tools/generate-relay-locations.mjs
+```
+
 ## Packaging
 
 ```bash

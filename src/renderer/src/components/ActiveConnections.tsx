@@ -8,7 +8,7 @@ import type { TrackerResult, TrackerCandidate, BlockProof } from '../types'
 const RELAY_REGION = 'aws-relay'
 
 const EMPTY: TrackerResult = {
-  dbdRunning: false, current_server: null, currentIp: null, currentRegion: null, blockedRegionHit: false, viaRelay: false,
+  dbdRunning: false, current_server: null, currentIp: null, currentRegion: null, blockedRegionHit: false, viaRelay: false, estimatedRegion: null,
   confidence: 0, candidates: [], udpPorts: [], dbdPid: 0, exitlagRunning: false,
 }
 
@@ -36,7 +36,9 @@ function ConfidenceBar({ value }: { value: number }) {
 
 function CandidateRow({ c, isTop }: { c: TrackerCandidate; isTop: boolean }) {
   const region = c.regionId ? regionInfo(c.regionId) : null
-  const label = region?.name ?? (c.regionId === RELAY_REGION ? 'AWS relay' : c.regionId ?? 'Not an AWS range')
+  const label = region
+    ? `${region.name}${c.estimated ? ' (estimated, AWS relay)' : ''}`
+    : c.regionId === RELAY_REGION ? 'AWS relay' : c.regionId ?? 'Not an AWS range'
   return (
     <div
       className="flex items-center gap-3 px-3 py-2 rounded-lg"
@@ -152,7 +154,9 @@ export function ActiveConnections({ blockedRegionIds }: { blockedRegionIds: stri
     }
   }, [enabled])
 
-  const currentRegion = result.currentRegion ? regionInfo(result.currentRegion) : null
+  const shownRegionId = result.currentRegion ?? result.estimatedRegion
+  const currentRegion = shownRegionId ? regionInfo(shownRegionId) : null
+  const isEstimate = !result.currentRegion && !!result.estimatedRegion
 
   return (
     <div className="flex h-full">
@@ -194,7 +198,7 @@ export function ActiveConnections({ blockedRegionIds }: { blockedRegionIds: stri
           style={{ background: 'rgba(90,200,255,0.05)', border: '1px solid rgba(90,200,255,0.15)' }}>
           <Info className="w-3.5 h-3.5 shrink-0 mt-0.5" style={{ color: '#5AC8FF' }} />
           <div className="text-[11px] text-white/50 leading-relaxed">
-            The detected region can be imprecise: since 2026, Amazon's new GameLift security (DDoS protection) routes some matches through relays that hide the real server region.
+            The detected region can be imprecise: since 2026, Amazon's new GameLift security (DDoS protection) routes matches through relays that hide the real server region. The region is then estimated from the relay location.
           </div>
         </div>
 
@@ -268,8 +272,16 @@ export function ActiveConnections({ blockedRegionIds }: { blockedRegionIds: stri
                     {currentRegion?.name ?? (result.viaRelay ? 'Hidden behind an AWS relay' : 'Not an AWS server')}
                   </span>
                   {currentRegion && <span className="text-[10px] text-white/35">{currentRegion.country}</span>}
+                  {isEstimate && (
+                    <span className="text-[9px] font-bold uppercase tracking-[0.1em] px-1.5 py-0.5 rounded"
+                      style={{ background: 'rgba(90,200,255,0.1)', color: '#5AC8FF', border: '1px solid rgba(90,200,255,0.25)' }}>
+                      Estimated
+                    </span>
+                  )}
                 </div>
-                <div className="text-[10px] font-mono text-white/25 mb-2">{result.current_server}</div>
+                <div className="text-[10px] font-mono text-white/25 mb-2">
+                  {result.current_server}{isEstimate ? ' · via AWS relay, location from public IP data' : ''}
+                </div>
                 <ConfidenceBar value={result.confidence} />
               </div>
             </div>

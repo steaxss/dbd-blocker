@@ -109,3 +109,23 @@ describe('parseIp / diffCidrs', () => {
     expect(diffCidrs(['a', 'b'], ['b', 'c'])).toEqual({ added: ['c'], removed: ['a'] })
   })
 })
+
+describe('relay location table', async () => {
+  const { default: table } = await import('../src/main/relay-locations.json')
+  const blocks = (table as { blocks: Record<string, string> }).blocks
+  const m = new CidrMatcher()
+  for (const [block, region] of Object.entries(blocks)) m.add(region, [block])
+
+  it('maps the relay observed in a real match to Dublin', () => {
+    expect(m.match('54.115.85.0')).toBe('eu-west-1')
+    expect(m.match('54.115.85.191')).toBe('eu-west-1')
+  })
+  it('only contains valid blocks and Dead by Daylight regions', () => {
+    const regions = new Set(['us-east-1', 'us-east-2', 'us-west-1', 'us-west-2', 'ca-central-1', 'eu-central-1', 'eu-west-1', 'eu-west-2',
+      'ap-south-1', 'ap-east-1', 'ap-northeast-1', 'ap-northeast-2', 'ap-southeast-1', 'ap-southeast-2', 'sa-east-1'])
+    for (const [block, region] of Object.entries(blocks)) {
+      expect(parseCidr(block), block).not.toBeNull()
+      expect(regions.has(region), `${block} -> ${region}`).toBe(true)
+    }
+  })
+})

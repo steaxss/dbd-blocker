@@ -63,6 +63,8 @@ export interface TrackerCandidate {
   lastSeen: number
   count: number
   regionId: string | null
+  /** regionId is an estimate (AWS relay located from public data). */
+  estimated?: boolean
 }
 
 export interface TrackerResult {
@@ -74,6 +76,8 @@ export interface TrackerResult {
   blockedRegionHit: boolean
   /** The game talks to an AWS GameLift relay: the real server region is hidden. */
   viaRelay: boolean
+  /** Region of the relay, estimated from public geolocation data. */
+  estimatedRegion: string | null
   confidence: number
   candidates: TrackerCandidate[]
   udpPorts: number[]
