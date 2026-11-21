@@ -24,6 +24,8 @@ export const DBD_PROCESS_NAMES = ['DeadByDaylight-Win64-Shipping', 'DeadByDaylig
 interface AppSettings {
   exePath: string
   permanentRegions: string[]
+  /** Also block the AWS GameLift relays located in blocked regions (default on). */
+  blockRelays: boolean
 }
 
 let cache: AppSettings | null = null
@@ -41,6 +43,7 @@ async function getSettings(): Promise<AppSettings> {
     permanentRegions: Array.isArray(parsed?.permanentRegions)
       ? [...new Set(parsed.permanentRegions.filter(isBlockableRegion))]
       : [],
+    blockRelays: typeof parsed?.blockRelays === 'boolean' ? parsed.blockRelays : true,
   }
   return cache
 }
@@ -57,6 +60,16 @@ export async function getExePath(): Promise<string> {
 export async function setExePath(path: string): Promise<void> {
   const s = await getSettings()
   s.exePath = path
+  await save()
+}
+
+export async function getBlockRelays(): Promise<boolean> {
+  return (await getSettings()).blockRelays
+}
+
+export async function setBlockRelaysSetting(enabled: boolean): Promise<void> {
+  const s = await getSettings()
+  s.blockRelays = enabled
   await save()
 }
 

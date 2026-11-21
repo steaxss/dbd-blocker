@@ -5,6 +5,8 @@
 export interface RegionProof {
   /** Blocked connection attempts since the app started. */
   count: number
+  /** Part of `count` aimed at an AWS GameLift relay of the region (a match there was prevented). */
+  relayCount: number
   lastAt: string
   lastRemote: string
 }
@@ -23,6 +25,8 @@ export interface DropEvent {
   remote: string
   port: number
   localPort: number
+  /** The destination is an AWS GameLift relay. */
+  relay?: boolean
 }
 
 const MAX_REMEMBERED = 20_000
@@ -47,9 +51,10 @@ export function mergeDropEvents(proof: BlockProof, seen: Set<string>, events: Dr
     if (seen.has(key)) continue
     seen.add(key)
     const remote = e.remote.includes(':') ? `[${e.remote}]:${e.port}` : `${e.remote}:${e.port}`
-    const current = proof.regions[e.region] ?? { count: 0, lastAt: '', lastRemote: '' }
+    const current = proof.regions[e.region] ?? { count: 0, relayCount: 0, lastAt: '', lastRemote: '' }
     proof.regions[e.region] = {
       count: current.count + 1,
+      relayCount: current.relayCount + (e.relay ? 1 : 0),
       lastAt: e.time > current.lastAt ? e.time : current.lastAt,
       lastRemote: e.time >= current.lastAt ? remote : current.lastRemote,
     }

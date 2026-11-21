@@ -11,6 +11,7 @@ import {
   getBlockedCount,
   getBlockedMap,
   isBlocked,
+  setBlockRelays,
   syncBlockedWithRanges,
   unblockAll,
   unblockRegion,
@@ -22,6 +23,7 @@ import {
   getExePath,
   setExePath,
   validateExePath,
+  getBlockRelays,
   getPermanentRegions,
   markPermanent,
   unmarkPermanent,
@@ -39,6 +41,7 @@ import {
 } from './tracker'
 import { checkForUpdate, downloadUpdate, installUpdate } from './updater'
 import { startProofMonitor } from './block-proof'
+import { estimateRelayRegion } from './relays'
 import { wfpDrops } from './wfp'
 
 export interface FirewallHealthResult {
@@ -144,7 +147,10 @@ export function registerIpcHandlers(win: BrowserWindow, log: LogEmitter, ready: 
   // Proof of blocking: Dead by Daylight connection attempts dropped by the filters (WFP net events).
   const proofMonitor = startProofMonitor({
     hasBlocks: () => getBlockedCount() > 0,
-    readDrops: (seconds) => wfpDrops(seconds),
+    readDrops: async (seconds) => {
+      const res = await wfpDrops(seconds)
+      return { ...res, events: res.events.map((e) => ({ ...e, relay: estimateRelayRegion(e.remote) !== null })) }
+    },
     emit: (proof) => { if (!win.isDestroyed()) win.webContents.send('block-proof', proof) },
   })
   app.once('before-quit', () => { clearInterval(autoRefresh); proofMonitor.stop() })
@@ -241,6 +247,14 @@ export function registerIpcHandlers(win: BrowserWindow, log: LogEmitter, ready: 
   }))
   ipcMain.handle('start-udp-tracker', guard(() => startTracker(trackerDeps)))
   ipcMain.handle('stop-udp-tracker', guard(() => stopTracker()))
+
+  ipcMain.handle('get-block-relays', guard(() => getBlockRelays()))
+  ipcMain.handle('set-block-relays', guard(async (enabled: unknown) => {
+    if (typeof enabled !== 'boolean') return { ok: false }
+    await setBlockRelays(enabled, log)
+    sendAllStatus()
+    return { ok: true }
+  }))
 
   ipcMain.handle('get-permanent-regions', guard(() => getPermanentRegions()))
 

@@ -89,6 +89,8 @@ export type ActiveConnectionsResult = TrackerResult
 
 export interface RegionProof {
   count: number
+  /** Attempts aimed at an AWS relay of the region: a match there was prevented. */
+  relayCount: number
   lastAt: string
   lastRemote: string
 }
@@ -166,6 +168,8 @@ export interface ElectronAPI {
   getActiveConnections: () => Promise<TrackerResult>
   getTrackerStatus:     () => Promise<{ running: boolean; result: TrackerResult }>
   getBlockProof:        () => Promise<BlockProof>
+  getBlockRelays:       () => Promise<boolean>
+  setBlockRelays:       (enabled: boolean) => Promise<{ ok: boolean }>
   onBlockProof:         (callback: (proof: BlockProof) => void) => () => void
   resetUdpMonitor:      () => Promise<void>
   startUdpTracker:      () => Promise<void>

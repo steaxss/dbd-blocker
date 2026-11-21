@@ -39,6 +39,8 @@ contextBridge.exposeInMainWorld('api', {
   getActiveConnections: () => ipcRenderer.invoke('get-active-connections'),
   getTrackerStatus:     () => ipcRenderer.invoke('get-tracker-status'),
   getBlockProof:        () => ipcRenderer.invoke('get-block-proof'),
+  getBlockRelays:       () => ipcRenderer.invoke('get-block-relays'),
+  setBlockRelays:       (enabled: boolean) => ipcRenderer.invoke('set-block-relays', enabled),
   onBlockProof: (callback: (proof: unknown) => void) => {
     const handler = (_: unknown, proof: unknown) => callback(proof)
     ipcRenderer.on('block-proof', handler)

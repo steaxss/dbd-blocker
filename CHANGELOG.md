@@ -14,6 +14,7 @@
 - WFP health check always reported error `0x00000000`.
 
 ### Added
+- **Block AWS relays** (setting, on by default): since 2026 matches go through Amazon GameLift relays that region blocks did not cover, which is how players ended up in blocked regions again. Blocking a region now also blocks the relays located there (estimated location, see `relay-locations.json`). Blocking check shows the attempts aimed at a relay.
 - **Blocking check**: the Active Connections tab counts every attempt of Dead by Daylight to reach a blocked region that Windows dropped (WFP drop log, read-only, no system setting changed). It proves blocks are effective, region by region.
 - DBD OverlayTools Premium promotion (banner on the grid view, card on Active Connections) with a link to the Discord.
 

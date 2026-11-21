@@ -15,6 +15,7 @@ It adds Windows Filtering Platform (WFP) filters scoped to the game executable, 
 - Active blocks follow AWS automatically: new ranges are added as soon as AWS publishes them (refresh at startup and every 6 hours)
 - Permanent blocks survive app exit and reboots; the others end with the app
 - Latency measured against the GameLift UDP ping beacons (the same endpoints matchmaking uses)
+- Blocks the Amazon GameLift relays located in blocked regions (since 2026 matches go through relays; setting, on by default)
 - Blocking check: counts the connection attempts of the game that Windows dropped for each blocked region, so you can see blocks working
 - Live game server detection (can be imprecise since Amazon GameLift routes some matches through relays)
 - Leaves nothing behind: no filter, sublayer, provider or ETW session once blocks are removed, the app is closed or uninstalled

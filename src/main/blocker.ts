@@ -6,7 +6,8 @@ import { countFamilies } from './aws-ranges'
 import { readJson } from './fs-utils'
 import { getAllRanges, getRegionRanges } from './ips'
 import { REGION_IDS, isBlockableRegion, isRegionId, type RegionId } from './regions'
-import { getExePath, getPermanentRegions, validateExePath } from './settings'
+import { getBlockRelays, getExePath, getPermanentRegions, setBlockRelaysSetting, validateExePath } from './settings'
+import { getRelayBlocks, regionBlockList } from './relays'
 import { WfpError, wfpApply, wfpList, wfpPurge, type WfpRegionState, type WfpSet } from './wfp'
 
 export type LogEmitter = (level: 'info' | 'success' | 'warning' | 'error' | 'step', message: string) => void
@@ -69,9 +70,18 @@ function sameRanges(a: readonly string[], b: readonly string[]): boolean {
   return b.every((c) => set.has(c))
 }
 
-function describe(cidrs: readonly string[]): string {
-  const { v4, v6 } = countFamilies(cidrs)
-  return v6 > 0 ? `${v4} IPv4 + ${v6} IPv6 ranges` : `${v4} IPv4 ranges`
+function describe(regionId: string, cidrs: readonly string[]): string {
+  const relays = new Set(getRelayBlocks(regionId))
+  const relayCount = cidrs.filter((c) => relays.has(c)).length
+  const { v4, v6 } = countFamilies(cidrs.filter((c) => !relays.has(c)))
+  const base = v6 > 0 ? `${v4} IPv4 + ${v6} IPv6 ranges` : `${v4} IPv4 ranges`
+  return relayCount > 0 ? `${base} + ${relayCount} AWS relay blocks` : base
+}
+
+/** What blocking a region covers: its EC2 ranges, plus its located AWS relays when the option is on. */
+async function desiredRanges(regionId: string, ranges?: Record<string, string[]>): Promise<string[]> {
+  const regional = ranges ? ranges[regionId] ?? [] : await getRegionRanges(regionId)
+  return regionBlockList(regional, getRelayBlocks(regionId), await getBlockRelays())
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -114,7 +124,7 @@ export async function reconcileOnStartup(log: LogEmitter): Promise<void> {
   const ranges = await getAllRanges()
   const set: WfpSet[] = []
   for (const id of wanted) {
-    const cidrs = ranges[id] ?? []
+    const cidrs = await desiredRanges(id, ranges)
     const current = list.regions[id]
     if (cidrs.length === 0) continue
     if (current && current.persistent && sameRanges(current.cidrs, cidrs)) continue
@@ -137,7 +147,7 @@ export async function reconcileOnStartup(log: LogEmitter): Promise<void> {
   const res = await wfpApply(exe, set, stale)
   replaceState(res.regions)
   if (stale.length > 0) log('info', `Removed leftover non-permanent blocks: ${stale.join(', ')}`)
-  for (const s of set) log('success', `[${s.region}] Permanent block synced (${describe(s.cidrs)})`)
+  for (const s of set) log('success', `[${s.region}] Permanent block synced (${describe(s.region, s.cidrs)})`)
 }
 
 export async function blockRegion(regionId: string, log: LogEmitter): Promise<ActionResult> {
@@ -152,13 +162,13 @@ export async function blockRegion(regionId: string, log: LogEmitter): Promise<Ac
   if (!exe) return { ok: false, error: 'DBD executable path not configured or invalid.', code: 'exe_path_invalid' }
 
   try {
-    const cidrs = await getRegionRanges(regionId)
+    const cidrs = await desiredRanges(regionId)
     if (cidrs.length === 0) {
       log('warning', `[${regionId}] No AWS ranges cached. Run Refresh IPs first.`)
       return { ok: false, error: 'No AWS ranges available. Run Refresh IPs first.', code: 'no_ranges' }
     }
     const persistent = (await getPermanentRegions()).includes(regionId)
-    log('step', `[${regionId}] Creating WFP filters for ${describe(cidrs)}${persistent ? ' (permanent)' : ''}...`)
+    log('step', `[${regionId}] Creating WFP filters for ${describe(regionId, cidrs)}${persistent ? ' (permanent)' : ''}...`)
     const res = await wfpApply(exe, [{ region: regionId, cidrs, persistent }], [])
     replaceState(res.regions)
     log('success', `[${regionId}] Blocked: ${res.regions[regionId]?.filters ?? 0} filters active. Restart the game if it is running.`)
@@ -205,7 +215,7 @@ export async function syncBlockedWithRanges(log: LogEmitter): Promise<string[]> 
   const permanent = new Set(await getPermanentRegions())
   const set: WfpSet[] = []
   for (const [id, current] of state) {
-    const cidrs = ranges[id] ?? []
+    const cidrs = await desiredRanges(id, ranges)
     if (cidrs.length === 0 || sameRanges(current.cidrs, cidrs)) continue
     set.push({ region: id, cidrs, persistent: permanent.has(id) })
   }
@@ -217,11 +227,11 @@ export async function syncBlockedWithRanges(log: LogEmitter): Promise<string[]> 
       const before = state.get(s.region)?.cidrs ?? []
       const added = s.cidrs.filter((c) => !before.includes(c)).length
       const removed = before.filter((c) => !s.cidrs.includes(c)).length
-      log('step', `[${s.region}] AWS ranges changed (+${added}/-${removed}): updating filters...`)
+      log('step', `[${s.region}] Blocked ranges changed (+${added}/-${removed}): updating filters...`)
     }
     const res = await wfpApply(exe, set, [])
     replaceState(res.regions)
-    log('success', `Blocked regions re-synced with the latest AWS ranges: ${set.map((s) => s.region).join(', ')}`)
+    log('success', `Blocked regions updated: ${set.map((s) => s.region).join(', ')}`)
     return set.map((s) => s.region)
   } catch (err) {
     log('error', `Re-sync of blocked regions failed: ${err instanceof Error ? err.message : String(err)}`)
@@ -236,10 +246,17 @@ export async function applyPersistence(regionId: RegionId, persistent: boolean, 
   if (!current || current.persistent === persistent) return
   const exe = await requireExe(log)
   if (!exe) return
-  const latest = await getRegionRanges(regionId)
+  const latest = await desiredRanges(regionId)
   const cidrs = latest.length > 0 ? latest : current.cidrs
   const res = await wfpApply(exe, [{ region: regionId, cidrs, persistent }], [])
   replaceState(res.regions)
+}
+
+/** Turns relay blocking on/off and re-applies the blocked regions accordingly. */
+export async function setBlockRelays(enabled: boolean, log: LogEmitter): Promise<void> {
+  await setBlockRelaysSetting(enabled)
+  log('info', enabled ? 'AWS relay blocking enabled' : 'AWS relay blocking disabled')
+  await syncBlockedWithRanges(log)
 }
 
 /** Called on quit: non-permanent blocks end with the app. Removes the WFP provider when nothing is left. */

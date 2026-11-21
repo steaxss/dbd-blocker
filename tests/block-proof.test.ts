@@ -20,6 +20,7 @@ describe('mergeDropEvents', () => {
     expect(proof.total).toBe(2)
     expect(proof.regions['ap-northeast-2']).toEqual({
       count: 2,
+      relayCount: 0,
       lastAt: '2026-11-21T21:08:21.411Z',
       lastRemote: '3.36.113.12:7770',
     })
@@ -30,6 +31,15 @@ describe('mergeDropEvents', () => {
     mergeDropEvents(proof, new Set(), [drop({ region: 'eu-west-2', remote: '2a05:d01c::1', port: 7777 })])
     expect(proof.regions['eu-west-2'].lastRemote).toBe('[2a05:d01c::1]:7777')
     expect(proof.regions['ap-northeast-2']).toBeUndefined()
+  })
+})
+
+describe('relay drops', () => {
+  it('counts attempts aimed at relays separately', () => {
+    const proof = emptyProof()
+    mergeDropEvents(proof, new Set(), [drop(), drop({ remote: '54.115.85.191', port: 7791, localPort: 1, relay: true })])
+    expect(proof.regions['ap-northeast-2'].count).toBe(2)
+    expect(proof.regions['ap-northeast-2'].relayCount).toBe(1)
   })
 })
 

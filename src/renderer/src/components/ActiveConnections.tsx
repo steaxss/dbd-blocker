@@ -102,6 +102,13 @@ function BlockingCheck({ blockedRegionIds }: { blockedRegionIds: string[] }) {
                     <span className="text-[11px]" style={{ color: '#44FF41' }}>
                       {stat.count} attempt{stat.count > 1 ? 's' : ''} blocked
                     </span>
+                    {(stat.relayCount ?? 0) > 0 && (
+                      <span className="text-[9px] font-bold uppercase tracking-[0.08em] px-1.5 py-0.5 rounded"
+                        style={{ background: 'rgba(181,121,255,0.1)', color: '#B579FF', border: '1px solid rgba(181,121,255,0.25)' }}
+                        title="Connections to an AWS relay of this region: a match there was prevented">
+                        {stat.relayCount} via relay
+                      </span>
+                    )}
                     <span className="ml-auto text-[10px] font-mono text-white/25 truncate">
                       {stat.lastRemote} · {timeAgo(stat.lastAt)}
                     </span>
@@ -122,7 +129,7 @@ function BlockingCheck({ blockedRegionIds }: { blockedRegionIds: string[] }) {
         </div>
       ) : blockedRegionIds.length > 0 && (
         <div className="text-[10px] text-white/30 leading-relaxed mt-3">
-          The game contacts each region while it searches for a match. Every attempt toward a blocked region is dropped by Windows and counted here.
+          The game contacts each region while it searches for a match. Every attempt toward a blocked region (server, ping beacon or AWS relay) is dropped by Windows and counted here.
         </div>
       )}
     </section>

@@ -105,6 +105,7 @@ export default function App() {
   }
 
   const [showSettings, setShowSettings]           = useState(false)
+  const [blockRelays, setBlockRelaysState]        = useState(true)
   const [exePathInput, setExePathInput]           = useState('')
   const [exePathResult, setExePathResult]         = useState<ExeValidationResult | null>(null)
   const [savingExe, setSavingExe]                 = useState(false)
@@ -112,6 +113,7 @@ export default function App() {
   const [autoDetectResult, setAutoDetectResult]   = useState<AutoDetectResult | null>(null)
 
   function openSettings() {
+    window.api.getBlockRelays().then(setBlockRelaysState).catch(() => {})
     setExePathInput(exePath)
     setExePathResult(null)
     setAutoDetectResult(null)
@@ -697,6 +699,29 @@ export default function App() {
                   {exePathResult.error ?? exePathResult.warning ?? '✓ Path saved successfully'}
                 </p>
               )}
+            </div>
+
+            <div className="mb-7 flex items-start gap-4 p-4 rounded-xl" style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.08)' }}>
+              <div className="flex-1">
+                <div className="text-[13px] font-bold uppercase tracking-widest text-white/50 mb-1.5">Block AWS relays</div>
+                <p className="text-[12px] text-white/45 leading-relaxed">
+                  Since 2026, matches go through Amazon GameLift relays (DDoS protection). Also block the relays located in blocked
+                  regions so you cannot be placed there. Relay locations are estimated from public IP data.
+                </p>
+              </div>
+              <button
+                role="switch"
+                aria-checked={blockRelays}
+                onClick={() => {
+                  const next = !blockRelays
+                  setBlockRelaysState(next)
+                  window.api.setBlockRelays(next).catch(() => setBlockRelaysState(!next))
+                }}
+                className="relative shrink-0 w-11 h-6 rounded-full transition-colors mt-0.5"
+                style={{ background: blockRelays ? '#44FF41' : 'rgba(255,255,255,0.15)' }}
+              >
+                <span className="absolute top-0.5 w-5 h-5 rounded-full bg-white transition-all" style={{ left: blockRelays ? 22 : 2 }} />
+              </button>
             </div>
 
             <div className="flex justify-end gap-3">
