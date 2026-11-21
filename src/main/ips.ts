@@ -3,7 +3,7 @@ import https from 'https'
 import { join } from 'path'
 import { readdir, rm } from 'fs/promises'
 import { diffCidrs } from './cidr'
-import { extractAllRegions, validateAwsRanges } from './aws-ranges'
+import { extractAllRegions, extractGlobalEc2Ranges, validateAwsRanges } from './aws-ranges'
 import { readJson, writeJsonAtomic } from './fs-utils'
 import { REGION_IDS } from './regions'
 
@@ -18,6 +18,8 @@ interface RangeCache {
   createDate: string
   fetchedAt: string
   regions: Record<string, string[]>
+  /** EC2 ranges with region GLOBAL (GameLift relays). Optional: absent from caches written by early 1.4.0 builds. */
+  globalEc2?: string[]
 }
 
 export interface RefreshResult {
@@ -109,6 +111,7 @@ export async function refreshRanges(): Promise<RefreshResult> {
     createDate: data.createDate,
     fetchedAt: new Date().toISOString(),
     regions,
+    globalEc2: extractGlobalEc2Ranges(data),
   }
   await writeJsonAtomic(cachePath(), memory)
   await removeLegacyCache()
@@ -127,6 +130,10 @@ export async function getRegionRanges(regionId: string): Promise<string[]> {
 
 export async function getAllRanges(): Promise<Record<string, string[]>> {
   return (await loadCache())?.regions ?? {}
+}
+
+export async function getGlobalEc2Ranges(): Promise<string[]> {
+  return (await loadCache())?.globalEc2 ?? []
 }
 
 export async function getRangeCounts(): Promise<Record<string, number>> {

@@ -23,6 +23,7 @@
 - Filters, sublayer and `ips/` cache from 1.1–1.3, plus 1.0 firewall rules (`Block_DBD_*`), are migrated automatically.
 - Ping uses the GameLift UDP beacons (`gamelift-ping.<region>.api.aws:7770`), including Hong Kong.
 - The tracker warns when the game is connected to a blocked region, or to an IP outside AWS.
+- The tracker recognizes Amazon GameLift relays (EC2 ranges published with region `GLOBAL`, used by GameLift Player Gateway / DDoS protection since 2026) instead of reporting them as unknown hosts. The real server region cannot be read from a relay IP.
 - PowerShell, `net`, `reg` and `logman` are called by absolute path, never through `PATH`.
 - IPC handlers validate their input and only answer the main window.
 - The app runs as a single instance.

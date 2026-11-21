@@ -72,6 +72,8 @@ export interface TrackerResult {
   currentRegion: string | null
   /** The game is connected to a server inside a region that is currently blocked. */
   blockedRegionHit: boolean
+  /** The game talks to an AWS GameLift relay: the real server region is hidden. */
+  viaRelay: boolean
   confidence: number
   candidates: TrackerCandidate[]
   udpPorts: number[]

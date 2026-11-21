@@ -5,7 +5,7 @@ import { REGIONS } from '../regions'
 import type { TrackerResult, TrackerCandidate } from '../types'
 
 const EMPTY: TrackerResult = {
-  dbdRunning: false, current_server: null, currentIp: null, currentRegion: null, blockedRegionHit: false,
+  dbdRunning: false, current_server: null, currentIp: null, currentRegion: null, blockedRegionHit: false, viaRelay: false,
   confidence: 0, candidates: [], udpPorts: [], dbdPid: 0, exitlagRunning: false,
 }
 
@@ -27,6 +27,8 @@ function ConfidenceBar({ value }: { value: number }) {
     </div>
   )
 }
+
+const RELAY_REGION = 'aws-relay'
 
 function CandidateRow({ c, isTop }: { c: TrackerCandidate; isTop: boolean }) {
   const region = c.regionId ? REGIONS.find(r => r.id === c.regionId) : null
@@ -60,7 +62,7 @@ function CandidateRow({ c, isTop }: { c: TrackerCandidate; isTop: boolean }) {
           )}
         </div>
         <div className="text-[9px] text-white/25 font-mono">
-          {region?.name ?? (c.regionId ?? 'Unknown region')} · hits={c.count}
+          {region?.name ?? (c.regionId === RELAY_REGION ? 'AWS relay (region hidden)' : c.regionId ?? 'Not an AWS range')} · hits={c.count}
         </div>
       </div>
 
@@ -249,7 +251,7 @@ export function ActiveConnections() {
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-2 mb-1">
                   <span className="text-[14px] font-bold text-white/90 truncate">
-                    {currentRegion?.name ?? result.currentRegion ?? 'Unknown Region'}
+                    {currentRegion?.name ?? (result.viaRelay ? 'AWS GameLift relay' : result.currentRegion ?? 'Not an AWS range')}
                   </span>
                   {currentRegion && (
                     <span className="text-[10px] text-white/35">{currentRegion.country}</span>
@@ -257,8 +259,15 @@ export function ActiveConnections() {
                 </div>
 
                 <div className="text-[10px] font-mono text-white/25 mb-2">
-                  {result.current_server} · {result.currentRegion}
+                  {result.current_server}{result.currentRegion ? ` · ${result.currentRegion}` : ''}
                 </div>
+
+                {result.viaRelay && (
+                  <div className="text-[11px] text-white/45 leading-relaxed mb-2">
+                    The game connects through an Amazon GameLift relay (DDoS protection). The relay IP is shared across regions,
+                    so the real server region cannot be read from it.
+                  </div>
+                )}
 
                 <ConfidenceBar value={result.confidence} />
               </div>

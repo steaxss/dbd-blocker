@@ -3,13 +3,16 @@ import { execFile, type ChildProcess } from 'child_process'
 import { createInterface } from 'readline'
 import { join } from 'path'
 import { CidrMatcher } from './cidr'
-import { getAllRanges } from './ips'
+import { getAllRanges, getGlobalEc2Ranges } from './ips'
 import { getScriptPath } from './paths'
 import { spawnScript } from './powershell'
 import { DBD_PROCESS_NAMES } from './settings'
 import type { LogEmitter } from './blocker'
 
 const ETW_SESSION = 'DBD-Blocker-ETW'
+
+/** Pseudo-region for AWS EC2 "GLOBAL" ranges: GameLift Player Gateway relays, real server region hidden. */
+export const RELAY_REGION = 'aws-relay'
 
 interface TrackerLine {
   dbdRunning: boolean
@@ -30,6 +33,8 @@ export interface TrackerResult {
   currentRegion: string | null
   /** The game is talking to a server inside a region the user blocked. */
   blockedRegionHit: boolean
+  /** The game talks to an AWS GameLift relay: the IP does not tell which region the server is in. */
+  viaRelay: boolean
   confidence: number
   candidates: Array<{ ip: string; port: number; score: number; lastSeen: number; count: number; regionId: string | null }>
   udpPorts: number[]
@@ -38,7 +43,7 @@ export interface TrackerResult {
 }
 
 export const EMPTY_TRACKER: TrackerResult = {
-  dbdRunning: false, current_server: null, currentIp: null, currentRegion: null, blockedRegionHit: false,
+  dbdRunning: false, current_server: null, currentIp: null, currentRegion: null, blockedRegionHit: false, viaRelay: false,
   confidence: 0, candidates: [], udpPorts: [], dbdPid: 0, exitlagRunning: false,
 }
 
@@ -66,12 +71,14 @@ async function getMatcher(): Promise<CidrMatcher> {
   if (matcher) return matcher
   const m = new CidrMatcher()
   for (const [regionId, cidrs] of Object.entries(await getAllRanges())) m.add(regionId, cidrs)
+  // Less specific than regional ranges, so a regional match always wins (longest prefix).
+  m.add(RELAY_REGION, await getGlobalEc2Ranges())
   matcher = m
   return m
 }
 
 export function resetTracker(deps: TrackerDeps): void {
-  last = { ...last, current_server: null, currentIp: null, currentRegion: null, blockedRegionHit: false, confidence: 0, candidates: [] }
+  last = { ...last, current_server: null, currentIp: null, currentRegion: null, blockedRegionHit: false, viaRelay: false, confidence: 0, candidates: [] }
   lastLeakKey = null
   deps.emit(last)
 }
@@ -97,7 +104,9 @@ async function handleLine(line: string, deps: TrackerDeps): Promise<void> {
     regionId: m.match(c.ip),
   }))
   const currentIp = data.currentIp ?? null
-  const currentRegion = currentIp ? m.match(currentIp) : null
+  const matched = currentIp ? m.match(currentIp) : null
+  const viaRelay = matched === RELAY_REGION
+  const currentRegion = viaRelay ? null : matched
   const blockedRegionHit = !!currentRegion && deps.isBlocked(currentRegion)
   const prev = last
 
@@ -107,6 +116,7 @@ async function handleLine(line: string, deps: TrackerDeps): Promise<void> {
     currentIp,
     currentRegion,
     blockedRegionHit,
+    viaRelay,
     confidence: data.confidence ?? 0,
     candidates,
     udpPorts: data.udpPorts ?? [],
@@ -119,7 +129,11 @@ async function handleLine(line: string, deps: TrackerDeps): Promise<void> {
   }
   if (currentIp && !currentRegion && last.confidence >= 0.6 && currentIp !== lastUnknownIp) {
     lastUnknownIp = currentIp
-    deps.log('warning', `[Tracker] Game server ${data.current_server} is not in any known AWS region range (relay, VPN or non-AWS host)`)
+    if (viaRelay) {
+      deps.log('warning', `[Tracker] Game traffic goes through an AWS GameLift relay (${data.current_server}, AWS range "GLOBAL"): the real server region cannot be read from this IP`)
+    } else {
+      deps.log('warning', `[Tracker] Game server ${data.current_server} is not in any AWS range (VPN, routing tool or non-AWS host)`)
+    }
   }
   const leakKey = blockedRegionHit ? `${currentRegion}|${currentIp}` : null
   if (leakKey && leakKey !== lastLeakKey && last.confidence >= 0.6) {

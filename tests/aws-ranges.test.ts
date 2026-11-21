@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { countFamilies, extractAllRegions, extractRegionRanges, validateAwsRanges } from '../src/main/aws-ranges'
+import { countFamilies, extractAllRegions, extractGlobalEc2Ranges, extractRegionRanges, validateAwsRanges } from '../src/main/aws-ranges'
 import { parseJsonOutput } from '../src/main/powershell'
 
 const fixture = validateAwsRanges({
@@ -13,6 +13,7 @@ const fixture = validateAwsRanges({
     { ip_prefix: '52.95.0.0/16', region: 'ap-northeast-2', service: 'S3' },          // not a game server range
     { ip_prefix: '15.230.0.0/16', region: 'us-east-1', service: 'EC2', network_border_group: 'us-east-1-bos-1' },
     { ip_prefix: '13.32.0.0/15', region: 'GLOBAL', service: 'CLOUDFRONT' },
+    { ip_prefix: '54.115.0.0/16', region: 'GLOBAL', service: 'EC2' },                  // GameLift relays
   ],
   ipv6_prefixes: [
     { ipv6_prefix: '2406:da12::/36', region: 'ap-northeast-2', service: 'EC2' },
@@ -46,6 +47,12 @@ describe('extractRegionRanges', () => {
   it('extracts every requested region', () => {
     const all = extractAllRegions(fixture, ['ap-northeast-2', 'us-east-1'])
     expect(Object.keys(all)).toEqual(['ap-northeast-2', 'us-east-1'])
+  })
+})
+
+describe('extractGlobalEc2Ranges', () => {
+  it('keeps EC2 GLOBAL ranges only (not CloudFront)', () => {
+    expect(extractGlobalEc2Ranges(fixture)).toEqual(['54.115.0.0/16'])
   })
 })
 

@@ -43,6 +43,14 @@ export function extractRegionRanges(data: AwsIpRanges, regionId: string): string
   return collapseCidrs(out)
 }
 
+/**
+ * EC2 ranges published with region "GLOBAL": not tied to one region. GameLift Player Gateway relays
+ * (DDoS protection, 2026) show up there: the game talks to a relay, the real server region is hidden.
+ */
+export function extractGlobalEc2Ranges(data: AwsIpRanges): string[] {
+  return extractRegionRanges(data, 'GLOBAL')
+}
+
 export function extractAllRegions(data: AwsIpRanges, regionIds: readonly string[]): Record<string, string[]> {
   const result: Record<string, string[]> = {}
   for (const id of regionIds) result[id] = extractRegionRanges(data, id)
