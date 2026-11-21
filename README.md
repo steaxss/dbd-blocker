@@ -81,4 +81,4 @@ The Windows installer is built with Electron Builder. `resources/installer.nsh` 
 
 ## License
 
-MIT
+MIT. Map data: [Natural Earth](https://www.naturalearthdata.com/) (public domain) via `world-atlas`.
