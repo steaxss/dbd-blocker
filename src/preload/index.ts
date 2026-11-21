@@ -38,6 +38,12 @@ contextBridge.exposeInMainWorld('api', {
 
   getActiveConnections: () => ipcRenderer.invoke('get-active-connections'),
   getTrackerStatus:     () => ipcRenderer.invoke('get-tracker-status'),
+  getBlockProof:        () => ipcRenderer.invoke('get-block-proof'),
+  onBlockProof: (callback: (proof: unknown) => void) => {
+    const handler = (_: unknown, proof: unknown) => callback(proof)
+    ipcRenderer.on('block-proof', handler)
+    return () => ipcRenderer.removeListener('block-proof', handler)
+  },
   resetUdpMonitor:      () => ipcRenderer.invoke('reset-udp-monitor'),
   startUdpTracker:      () => ipcRenderer.invoke('start-udp-tracker'),
   stopUdpTracker:       () => ipcRenderer.invoke('stop-udp-tracker'),

@@ -13,6 +13,10 @@
 - The ETW session stayed active after the tracker was killed. It is now closed on stop, on app exit and if the app crashes.
 - WFP health check always reported error `0x00000000`.
 
+### Added
+- **Blocking check**: the Active Connections tab counts every attempt of Dead by Daylight to reach a blocked region that Windows dropped (WFP drop log, read-only, no system setting changed). It proves blocks are effective, region by region.
+- DBD OverlayTools Premium card with a link to the Discord.
+
 ### Changed
 - The map no longer uses CARTO tiles, which now require an API key (the map showed "API key required"). The world map is drawn from embedded Natural Earth data (public domain): no API key, no third-party request exposing your IP, works offline. Country names are shown in English, with more labels as you zoom in.
 - A dedicated WFP provider and sublayer own every filter. When the last block is removed, both are deleted, so nothing is left behind.
@@ -30,4 +34,5 @@
 - Settings and cache are written atomically.
 - Removed code obfuscation (the project is open source): production builds are now identical to dev builds, readable in crash reports and less prone to antivirus false positives.
 - Removed the unused `udp-tracker.ps1` and dead code.
+- Active Connections: removed the scoring formulas and technical panels, the tracker toggle survives tab changes, and the page says when the region is hidden behind a GameLift relay.
 - Added unit tests (vitest).

@@ -9,6 +9,8 @@
 #                "set":    [ { "region": "ap-northeast-2", "cidrs": ["3.34.0.0/15", "2406:da12::/36"], "persistent": false } ],
 #                "remove": [ "eu-west-2" ] }
 #              "set" replaces every filter of that region, "remove" deletes them.
+#   drops   -> packets dropped by the app filters in the last -Seconds (Windows WFP net events, read through
+#              netsh): proof that blocks are effective. Read-only, no system setting is changed.
 #   purge   -> deletes every filter, sublayer and provider created by any version of the app (zero residue),
 #              plus the legacy Windows Firewall rules (Block_DBD_*) written by v1.0.
 #
@@ -25,8 +27,10 @@
 
 param(
     [Parameter(Mandatory = $true)]
-    [ValidateSet('list', 'apply', 'purge')]
-    [string]$Action
+    [ValidateSet('list', 'apply', 'purge', 'drops')]
+    [string]$Action,
+    [ValidateRange(10, 3600)]
+    [int]$Seconds = 120
 )
 
 Set-StrictMode -Version Latest
@@ -665,6 +669,53 @@ try {
             }
         }
 
+        'drops' {
+            $state = Get-OwnedState $engine
+            $regionByFilter = @{}
+            foreach ($f in $state.filters) {
+                if (-not $f.Legacy -and $f.Region) { $regionByFilter[[string]$f.Id] = $f.Region }
+            }
+            if ($regionByFilter.Count -eq 0) {
+                Write-Result @{ ok = $true; available = $true; events = @() }
+                break
+            }
+
+            $tmp = Join-Path ([System.IO.Path]::GetTempPath()) ('dbd-blocker-netevents-' + [guid]::NewGuid().ToString('N') + '.xml')
+            try {
+                $netsh = Join-Path $env:SystemRoot 'System32\netsh.exe'
+                & $netsh wfp show netevents "file=$tmp" "timewindow=$Seconds" | Out-Null
+                if (-not (Test-Path -LiteralPath $tmp)) {
+                    Write-Result @{ ok = $true; available = $false; events = @() }
+                    break
+                }
+                $doc = New-Object System.Xml.XmlDocument
+                $doc.Load($tmp)
+                $events = New-Object System.Collections.Generic.List[object]
+                foreach ($item in $doc.SelectNodes('/netEvents/item')) {
+                    $type = $item.SelectSingleNode('type')
+                    if (-not $type -or $type.InnerText -notlike '*CLASSIFY_DROP*') { continue }
+                    $fid = $item.SelectSingleNode('classifyDrop/filterId')
+                    if (-not $fid -or -not $regionByFilter.ContainsKey($fid.InnerText)) { continue }
+                    $h = $item.SelectSingleNode('header')
+                    $remote = $h.SelectSingleNode('remoteAddrV4')
+                    if (-not $remote) { $remote = $h.SelectSingleNode('remoteAddrV6') }
+                    $remoteText = ''
+                    if ($remote) { $remoteText = $remote.InnerText }
+                    $events.Add(@{
+                        time      = $h.SelectSingleNode('timeStamp').InnerText
+                        region    = $regionByFilter[$fid.InnerText]
+                        filterId  = $fid.InnerText
+                        remote    = $remoteText
+                        port      = [int]$h.SelectSingleNode('remotePort').InnerText
+                        localPort = [int]$h.SelectSingleNode('localPort').InnerText
+                    })
+                }
+                Write-Result @{ ok = $true; available = $true; events = $events.ToArray() }
+            } finally {
+                Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue
+            }
+        }
+
         'purge' {
             $before = Get-OwnedState $engine
             $engine.Begin()
@@ -691,7 +742,7 @@ try {
 } catch {
     $msg = $_.Exception.Message
     if ($_.Exception.InnerException) { $msg = $_.Exception.InnerException.Message }
-    Write-Result @{ ok = $false; error = $msg }
+    Write-Result @{ ok = $false; error = $msg; line = $_.InvocationInfo.ScriptLineNumber }
     exit 1
 } finally {
     if ($engine) { $engine.Dispose() }

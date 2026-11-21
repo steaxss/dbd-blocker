@@ -54,8 +54,8 @@ function serialized<T>(task: () => Promise<T>): Promise<T> {
   return run
 }
 
-async function call<T>(action: 'list' | 'apply' | 'purge', payload?: unknown): Promise<T> {
-  const res = await runScript(getScriptPath('wfp-block.ps1'), ['-Action', action], {
+async function call<T>(action: 'list' | 'apply' | 'purge' | 'drops', payload?: unknown, extraArgs: string[] = []): Promise<T> {
+  const res = await runScript(getScriptPath('wfp-block.ps1'), ['-Action', action, ...extraArgs], {
     stdin: payload === undefined ? '' : JSON.stringify(payload),
     timeoutMs: 120_000,
   })
@@ -75,6 +75,28 @@ export function wfpList(): Promise<WfpListResult> {
 
 export function wfpApply(processPath: string | null, set: WfpSet[], remove: string[]): Promise<WfpApplyResult> {
   return serialized(() => call<WfpApplyResult>('apply', { processPath: processPath ?? '', set, remove }))
+}
+
+export interface WfpDropEvent {
+  time: string
+  region: string
+  filterId: string
+  remote: string
+  port: number
+  localPort: number
+}
+
+export interface WfpDropsResult {
+  ok: true
+  /** false when Windows did not produce the net event log (collection disabled). */
+  available: boolean
+  events: WfpDropEvent[]
+}
+
+/** Packets dropped by the app filters in the last `seconds` (read-only, not serialized with writes). */
+export async function wfpDrops(seconds: number): Promise<WfpDropsResult> {
+  const res = await call<WfpDropsResult>('drops', undefined, ['-Seconds', String(Math.round(seconds))])
+  return { ...res, events: Array.isArray(res.events) ? res.events : res.events ? [res.events] : [] }
 }
 
 export function wfpPurge(): Promise<WfpPurgeResult> {

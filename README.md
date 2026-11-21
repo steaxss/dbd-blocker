@@ -15,7 +15,8 @@ It adds Windows Filtering Platform (WFP) filters scoped to the game executable, 
 - Active blocks follow AWS automatically: new ranges are added as soon as AWS publishes them (refresh at startup and every 6 hours)
 - Permanent blocks survive app exit and reboots; the others end with the app
 - Latency measured against the GameLift UDP ping beacons (the same endpoints matchmaking uses)
-- Live game server detection, with a warning when the game is connected to a region you blocked
+- Blocking check: counts the connection attempts of the game that Windows dropped for each blocked region, so you can see blocks working
+- Live game server detection (can be imprecise since Amazon GameLift routes some matches through relays)
 - Leaves nothing behind: no filter, sublayer, provider or ETW session once blocks are removed, the app is closed or uninstalled
 
 `us-east-1` cannot be blocked: Dead by Daylight backend services (login, matchmaking, EAC) run there.
@@ -35,7 +36,7 @@ It adds Windows Filtering Platform (WFP) filters scoped to the game executable, 
 
 **"I still get sent to a region I blocked"**
 
-1. Restart Dead by Daylight after blocking: WFP only applies to new connections.
+1. Restart Dead by Daylight after blocking: WFP only applies to new connections. Then check *Blocking check* in Active Connections: attempts toward the blocked region should appear while you search for a match.
 2. Open the *Server Tracker*. If it says *Connected to a blocked region*, the game was started before the block.
 3. Click *Refresh IPs*. Since 1.4.0, active blocks are re-synced automatically when AWS adds ranges. Before that, a block created weeks earlier missed the new GameLift ranges, which is how players ended up in Seoul or other blocked regions.
 4. VPNs and routing tools (ExitLag, GearUP...) can relay traffic through other IPs. The tracker warns when the server IP is not in any AWS range.

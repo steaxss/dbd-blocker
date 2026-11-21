@@ -8,6 +8,7 @@ import { runScript } from './powershell'
 import {
   applyPersistence,
   blockRegion,
+  getBlockedCount,
   getBlockedMap,
   isBlocked,
   syncBlockedWithRanges,
@@ -37,6 +38,8 @@ import {
   type TrackerDeps,
 } from './tracker'
 import { checkForUpdate, downloadUpdate, installUpdate } from './updater'
+import { startProofMonitor } from './block-proof'
+import { wfpDrops } from './wfp'
 
 export interface FirewallHealthResult {
   ok: boolean
@@ -138,7 +141,13 @@ export function registerIpcHandlers(win: BrowserWindow, log: LogEmitter, ready: 
   const autoRefresh = setInterval(() => {
     doRefresh().catch((err) => log('warning', `Automatic AWS range refresh failed: ${String(err)}`))
   }, AUTO_REFRESH_MS)
-  app.once('before-quit', () => clearInterval(autoRefresh))
+  // Proof of blocking: Dead by Daylight connection attempts dropped by the filters (WFP net events).
+  const proofMonitor = startProofMonitor({
+    hasBlocks: () => getBlockedCount() > 0,
+    readDrops: (seconds) => wfpDrops(seconds),
+    emit: (proof) => { if (!win.isDestroyed()) win.webContents.send('block-proof', proof) },
+  })
+  app.once('before-quit', () => { clearInterval(autoRefresh); proofMonitor.stop() })
 
   ipcMain.handle('block-region', guard(async (regionId: unknown) => {
     if (!isBlockableRegion(regionId)) {
@@ -224,6 +233,7 @@ export function registerIpcHandlers(win: BrowserWindow, log: LogEmitter, ready: 
   }))
 
   ipcMain.handle('get-active-connections', guard(() => getTrackerState()))
+  ipcMain.handle('get-block-proof', guard(() => proofMonitor.get()))
   ipcMain.handle('get-tracker-status', guard(() => ({ running: isTrackerRunning(), result: getTrackerState() })))
   ipcMain.handle('reset-udp-monitor', guard(() => {
     resetTracker(trackerDeps)

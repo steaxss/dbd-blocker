@@ -83,6 +83,19 @@ export interface TrackerResult {
 
 export type ActiveConnectionsResult = TrackerResult
 
+export interface RegionProof {
+  count: number
+  lastAt: string
+  lastRemote: string
+}
+
+/** Dead by Daylight connection attempts dropped by the filters (WFP net events), per region. */
+export interface BlockProof {
+  available: boolean
+  regions: Record<string, RegionProof>
+  total: number
+}
+
 export interface RefreshIpsResult {
   added: number
   removed: number
@@ -148,6 +161,8 @@ export interface ElectronAPI {
   pingRegion: (regionId: string) => Promise<PingResult>
   getActiveConnections: () => Promise<TrackerResult>
   getTrackerStatus:     () => Promise<{ running: boolean; result: TrackerResult }>
+  getBlockProof:        () => Promise<BlockProof>
+  onBlockProof:         (callback: (proof: BlockProof) => void) => () => void
   resetUdpMonitor:      () => Promise<void>
   startUdpTracker:      () => Promise<void>
   stopUdpTracker:       () => Promise<void>
