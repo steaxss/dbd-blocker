@@ -1,147 +1,107 @@
-# DBD-Blocker WFP direct API manager
-# Called from the Electron main process via child_process.spawn.
-# Requires Administrator privileges.
+#Requires -Version 5.1
+# DBD Server Blocker - Windows Filtering Platform manager.
+# Called from the Electron main process. Requires Administrator privileges and 64-bit PowerShell.
 #
-# Usage:
-#   -Action block   -CidrsJson '["1.2.3.0/24","2.3.4.0/16"]'
-#   -Action block   -CidrsJson '["1.2.3.0/24"]' -ProcessPath "C:\...\DeadByDaylight-Win64-Shipping.exe"
-#   -Action unblock -FilterIdsJson '[69252,69253]'
-#   -Action check   -FilterIdsJson '[69252,69253]'
+# Actions:
+#   list    -> current filters owned by the app, grouped by region (WFP is the source of truth)
+#   apply   -> atomic batch (one WFP transaction) read from STDIN as JSON:
+#              { "processPath": "C:\\...\\DeadByDaylight-Win64-Shipping.exe",
+#                "set":    [ { "region": "ap-northeast-2", "cidrs": ["3.34.0.0/15", "2406:da12::/36"], "persistent": false } ],
+#                "remove": [ "eu-west-2" ] }
+#              "set" replaces every filter of that region, "remove" deletes them.
+#   purge   -> deletes every filter, sublayer and provider created by any version of the app (zero residue),
+#              plus the legacy Windows Firewall rules (Block_DBD_*) written by v1.0.
 #
-# Outputs a single value to stdout:
-#   block   -> JSON array of filter IDs: [69252,69253,...]
-#   unblock -> "true" or "false"
-#   check   -> "true" or "false"
+# Output: exactly one JSON document on stdout. Errors -> {"ok":false,"error":"..."} and exit code 1.
+#
+# Model:
+#   provider  DBD Server Blocker (persistent)
+#   sublayer  DBD Server Blocker (persistent, weight 0xFFFF, owned by the provider)
+#   filters   one per CIDR and per ALE layer (connect + recv/accept), scoped to the game executable (ALE_APP_ID),
+#             tagged "region=<id>" in their description, FWPM_FILTER_FLAG_CLEAR_ACTION_RIGHT so lower sublayers
+#             (VPN / booster callouts) cannot override the block.
+#             Non-permanent regions use non-persistent filters: they disappear on reboot even if the app crashed.
+#   When the last filter is removed, the sublayer and the provider are deleted as well.
 
 param(
     [Parameter(Mandatory = $true)]
-    [ValidateSet('block', 'unblock', 'check', 'purge')]
-    [string]$Action,
-    [string]$CidrsJson     = '[]',
-    [string]$CidrsJsonBase64 = '',
-    [string]$FilterIdsJson = '[]',
-    [string]$FilterIdsJsonBase64 = '',
-    [string]$ProcessPath   = ''
+    [ValidateSet('list', 'apply', 'purge')]
+    [string]$Action
 )
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
+[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 
-function Assert-64BitProcess {
-    if (-not [Environment]::Is64BitProcess) {
-        throw '64-bit PowerShell is required for the WFP layout used by this script.'
-    }
+function Write-Result([hashtable]$obj) {
+    [Console]::Out.WriteLine(($obj | ConvertTo-Json -Compress -Depth 6))
 }
 
-function Normalize-StringArrayJson([string]$json, [string]$label) {
-    try {
-        $parsed = ConvertFrom-Json -InputObject $json -ErrorAction Stop
-    } catch {
-        throw "Invalid $label JSON. Expected a JSON array."
-    }
-
-    if ($parsed -is [string] -or $null -eq $parsed) {
-        throw "Invalid $label JSON. Expected an array of strings."
-    }
-
-    $arr = @()
-    foreach ($item in $parsed) {
-        $arr += ,$item
-    }
-
-    foreach ($item in $arr) {
-        if ($null -eq $item -or -not ($item -is [string])) {
-            throw "Invalid $label JSON. Expected an array of strings."
-        }
-    }
-
-    return ($arr | ConvertTo-Json -Compress)
+if (-not [Environment]::Is64BitProcess) {
+    Write-Result @{ ok = $false; error = '64-bit PowerShell is required for the WFP structure layout.' }
+    exit 1
 }
 
-function Normalize-UlongArrayJson([string]$json, [string]$label) {
-    try {
-        $parsed = ConvertFrom-Json -InputObject $json -ErrorAction Stop
-    } catch {
-        throw "Invalid $label JSON. Expected a JSON array."
-    }
-
-    if ($parsed -is [string] -or $null -eq $parsed) {
-        throw "Invalid $label JSON. Expected a JSON array."
-    }
-
-    $normalized = New-Object System.Collections.Generic.List[string]
-    foreach ($item in $parsed) {
-        if ($null -eq $item) {
-            throw "Invalid $label JSON. Null values are not allowed."
-        }
-
-        $text = [string]$item
-        [UInt64]$value = 0
-        if (-not [UInt64]::TryParse($text, [ref]$value)) {
-            throw "Invalid $label JSON. Expected unsigned integer filter IDs."
-        }
-        $normalized.Add($value.ToString()) | Out-Null
-    }
-
-    return ($normalized | ConvertTo-Json -Compress)
-}
-
-function Decode-Base64Json([string]$base64Value, [string]$label) {
-    if ([string]::IsNullOrWhiteSpace($base64Value)) {
-        return $null
-    }
-
-    try {
-        $bytes = [Convert]::FromBase64String($base64Value)
-        return [System.Text.Encoding]::UTF8.GetString($bytes)
-    } catch {
-        throw "Invalid $label base64 payload."
-    }
-}
-
-Assert-64BitProcess
-
-if (-not ([System.Management.Automation.PSTypeName]'WfpMgr').Type) {
-    Add-Type -TypeDefinition @'
+if (-not ([System.Management.Automation.PSTypeName]'DbdWfp.Engine').Type) {
+    Add-Type -Language CSharp -TypeDefinition @'
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Net;
+using System.Net.Sockets;
 using System.Runtime.InteropServices;
 
-public static class WfpMgr {
+namespace DbdWfp {
+
+public sealed class FilterInfo {
+    public ulong Id;
+    public string Region;
+    public string Cidr;
+    public string Layer;
+    public bool Persistent;
+    public bool Legacy;
+}
+
+public sealed class Engine : IDisposable {
+    // ---- constants ------------------------------------------------------------------------------
     const uint RPC_C_AUTHN_DEFAULT = 0xFFFFFFFF;
-    const uint FWPM_FILTER_FLAG_PERSISTENT = 0x00000001;
-    const uint FWPM_SUBLAYER_FLAG_PERSISTENT = 0x00000001;
+    const uint FWPM_PROVIDER_FLAG_PERSISTENT = 0x1;
+    const uint FWPM_SUBLAYER_FLAG_PERSISTENT = 0x1;
+    const uint FWPM_FILTER_FLAG_PERSISTENT = 0x1;
+    const uint FWPM_FILTER_FLAG_CLEAR_ACTION_RIGHT = 0x8;
     const uint FWP_EMPTY = 0;
-    const uint FWP_ACTION_BLOCK = 0x00001001;
     const uint FWP_BYTE_BLOB_TYPE = 12;
     const uint FWP_V4_ADDR_MASK = 0x100;
+    const uint FWP_V6_ADDR_MASK = 0x101;
+    const uint FWP_ACTION_BLOCK = 0x00001001;
     const int FWP_MATCH_EQUAL = 0;
+
+    const uint FWP_E_FILTER_NOT_FOUND = 0x80320003;
+    const uint FWP_E_PROVIDER_NOT_FOUND = 0x80320005;
+    const uint FWP_E_SUBLAYER_NOT_FOUND = 0x80320007;
     const uint FWP_E_ALREADY_EXISTS = 0x80320009;
-    const uint FWP_E_FILTER_NOT_FOUND = 0x80320002;
+    const uint FWP_E_IN_USE = 0x8032000A;
 
-    static readonly Guid LAYER = new Guid("c38d57d1-05a7-4c33-904f-7fbceee60e82");
-    static readonly Guid SUBLAYER = new Guid("dbd00001-dbd0-dbd0-dbd0-000000000001");
-    static readonly Guid FIELD_IP = new Guid("b235ae9a-1d64-49b8-a44c-5ff3d9095045");
-    static readonly Guid FIELD_APP = new Guid("d78e1e87-8644-4ea5-9437-d809ecefc971");
+    public const string TagPrefix = "region=";
+
+    public static readonly Guid PROVIDER = new Guid("6a8f3c2e-4d1b-4f7a-9c3e-2b5d8e1f0a01");
+    public static readonly Guid SUBLAYER = new Guid("6a8f3c2e-4d1b-4f7a-9c3e-2b5d8e1f0a02");
+    // Sublayer used by v1.1 - v1.3 (no provider, filters tracked in wfp-state.json).
+    public static readonly Guid LEGACY_SUBLAYER = new Guid("dbd00001-dbd0-dbd0-dbd0-000000000001");
+
+    static readonly Guid LAYER_CONNECT_V4 = new Guid("c38d57d1-05a7-4c33-904f-7fbceee60e82");
+    static readonly Guid LAYER_CONNECT_V6 = new Guid("4a72393b-319f-44bc-84c3-ba54dcb3b6b4");
+    static readonly Guid LAYER_RECV_V4 = new Guid("e1cd9fe7-f4b5-4273-96c0-592e487b8650");
+    static readonly Guid LAYER_RECV_V6 = new Guid("a3b42c97-9f04-4672-b87e-cee9c483257f");
+    static readonly Guid FIELD_REMOTE_IP = new Guid("b235ae9a-1d64-49b8-a44c-5ff3d9095045");
+    static readonly Guid FIELD_APP_ID = new Guid("d78e1e87-8644-4ea5-9437-d809ecefc971");
+
+    // ---- native structures (x64) ---------------------------------------------------------------
+    [StructLayout(LayoutKind.Sequential)]
+    struct FWPM_DISPLAY_DATA0 { public IntPtr name; public IntPtr description; }
 
     [StructLayout(LayoutKind.Sequential)]
-    struct FWPM_DISPLAY_DATA0 {
-        public IntPtr name;
-        public IntPtr description;
-    }
-
-    [StructLayout(LayoutKind.Sequential)]
-    struct FWP_BYTE_BLOB {
-        public uint size;
-        public IntPtr data;
-    }
-
-    [StructLayout(LayoutKind.Sequential)]
-    struct FWP_V4_ADDR_AND_MASK {
-        public uint addr;
-        public uint mask;
-    }
+    struct FWP_BYTE_BLOB { public uint size; public IntPtr data; }
 
     [StructLayout(LayoutKind.Explicit, Size = 16)]
     struct FWP_VALUE0 {
@@ -153,7 +113,6 @@ public static class WfpMgr {
     [StructLayout(LayoutKind.Explicit, Size = 16)]
     struct FWP_CONDITION_VALUE0 {
         [FieldOffset(0)] public uint type;
-        [FieldOffset(8)] public ulong uint64;
         [FieldOffset(8)] public IntPtr ptr;
     }
 
@@ -168,13 +127,21 @@ public static class WfpMgr {
     struct FWPM_ACTION0 {
         [FieldOffset(0)] public uint type;
         [FieldOffset(4)] public Guid filterType;
-        [FieldOffset(4)] public Guid calloutKey;
     }
 
     [StructLayout(LayoutKind.Explicit, Size = 16)]
     struct FWPM_CONTEXT0 {
         [FieldOffset(0)] public ulong rawContext;
         [FieldOffset(0)] public Guid providerContextKey;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    struct FWPM_PROVIDER0 {
+        public Guid providerKey;
+        public FWPM_DISPLAY_DATA0 displayData;
+        public uint flags;
+        public FWP_BYTE_BLOB providerData;
+        public IntPtr serviceName;
     }
 
     [StructLayout(LayoutKind.Sequential)]
@@ -206,367 +173,526 @@ public static class WfpMgr {
         public FWP_VALUE0 effectiveWeight;
     }
 
-    [DllImport("fwpuclnt.dll")] static extern uint FwpmEngineOpen0(IntPtr s, uint a, IntPtr i, IntPtr se, out IntPtr h);
-    [DllImport("fwpuclnt.dll")] static extern uint FwpmEngineClose0(IntPtr h);
-    [DllImport("fwpuclnt.dll")] static extern uint FwpmSubLayerAdd0(IntPtr h, ref FWPM_SUBLAYER0 sl, IntPtr sd);
-    [DllImport("fwpuclnt.dll")] static extern uint FwpmFilterAdd0(IntPtr h, ref FWPM_FILTER0 f, IntPtr sd, out ulong fid);
-    [DllImport("fwpuclnt.dll")] static extern uint FwpmFilterDeleteById0(IntPtr h, ulong fid);
-    [DllImport("fwpuclnt.dll")] static extern uint FwpmFilterGetById0(IntPtr h, ulong fid, out IntPtr fp);
-    [DllImport("fwpuclnt.dll")] static extern uint FwpmFilterCreateEnumHandle0(IntPtr h, IntPtr tmpl, out IntPtr eh);
-    [DllImport("fwpuclnt.dll")] static extern uint FwpmFilterEnum0(IntPtr h, IntPtr eh, uint req, out IntPtr entries, out uint ret);
-    [DllImport("fwpuclnt.dll")] static extern uint FwpmFilterDestroyEnumHandle0(IntPtr h, IntPtr eh);
+    // ---- P/Invoke ------------------------------------------------------------------------------
+    [DllImport("fwpuclnt.dll")] static extern uint FwpmEngineOpen0(IntPtr serverName, uint authnService, IntPtr authIdentity, IntPtr session, out IntPtr engineHandle);
+    [DllImport("fwpuclnt.dll")] static extern uint FwpmEngineClose0(IntPtr engineHandle);
+    [DllImport("fwpuclnt.dll")] static extern uint FwpmTransactionBegin0(IntPtr engineHandle, uint flags);
+    [DllImport("fwpuclnt.dll")] static extern uint FwpmTransactionCommit0(IntPtr engineHandle);
+    [DllImport("fwpuclnt.dll")] static extern uint FwpmTransactionAbort0(IntPtr engineHandle);
+    [DllImport("fwpuclnt.dll")] static extern uint FwpmProviderAdd0(IntPtr engineHandle, ref FWPM_PROVIDER0 provider, IntPtr sd);
+    [DllImport("fwpuclnt.dll")] static extern uint FwpmProviderDeleteByKey0(IntPtr engineHandle, ref Guid key);
+    [DllImport("fwpuclnt.dll")] static extern uint FwpmProviderGetByKey0(IntPtr engineHandle, ref Guid key, out IntPtr provider);
+    [DllImport("fwpuclnt.dll")] static extern uint FwpmSubLayerAdd0(IntPtr engineHandle, ref FWPM_SUBLAYER0 subLayer, IntPtr sd);
+    [DllImport("fwpuclnt.dll")] static extern uint FwpmSubLayerDeleteByKey0(IntPtr engineHandle, ref Guid key);
+    [DllImport("fwpuclnt.dll")] static extern uint FwpmSubLayerGetByKey0(IntPtr engineHandle, ref Guid key, out IntPtr subLayer);
+    [DllImport("fwpuclnt.dll")] static extern uint FwpmFilterAdd0(IntPtr engineHandle, ref FWPM_FILTER0 filter, IntPtr sd, out ulong id);
+    [DllImport("fwpuclnt.dll")] static extern uint FwpmFilterDeleteById0(IntPtr engineHandle, ulong id);
+    [DllImport("fwpuclnt.dll")] static extern uint FwpmFilterCreateEnumHandle0(IntPtr engineHandle, IntPtr template, out IntPtr enumHandle);
+    [DllImport("fwpuclnt.dll")] static extern uint FwpmFilterEnum0(IntPtr engineHandle, IntPtr enumHandle, uint numEntriesRequested, out IntPtr entries, out uint numEntriesReturned);
+    [DllImport("fwpuclnt.dll")] static extern uint FwpmFilterDestroyEnumHandle0(IntPtr engineHandle, IntPtr enumHandle);
     [DllImport("fwpuclnt.dll")] static extern void FwpmFreeMemory0(ref IntPtr p);
     [DllImport("fwpuclnt.dll", CharSet = CharSet.Unicode)] static extern uint FwpmGetAppIdFromFileName0(string fileName, out IntPtr appId);
-    [DllImport("kernel32.dll", EntryPoint = "RtlZeroMemory")] static extern void ZeroMemory(IntPtr dest, IntPtr size);
 
-    static WfpMgr() {
-        AssertLayouts();
+    // ---- layout self-check ---------------------------------------------------------------------
+    static Engine() {
+        if (IntPtr.Size != 8) throw new InvalidOperationException("64-bit process required.");
+        Check("FWP_VALUE0", Marshal.SizeOf(typeof(FWP_VALUE0)), 16);
+        Check("FWP_CONDITION_VALUE0", Marshal.SizeOf(typeof(FWP_CONDITION_VALUE0)), 16);
+        Check("FWPM_FILTER_CONDITION0", Marshal.SizeOf(typeof(FWPM_FILTER_CONDITION0)), 40);
+        Check("FWPM_FILTER_CONDITION0.conditionValue", Off(typeof(FWPM_FILTER_CONDITION0), "conditionValue"), 24);
+        Check("FWPM_ACTION0", Marshal.SizeOf(typeof(FWPM_ACTION0)), 20);
+        Check("FWPM_PROVIDER0", Marshal.SizeOf(typeof(FWPM_PROVIDER0)), 64);
+        Check("FWPM_PROVIDER0.serviceName", Off(typeof(FWPM_PROVIDER0), "serviceName"), 56);
+        Check("FWPM_SUBLAYER0", Marshal.SizeOf(typeof(FWPM_SUBLAYER0)), 72);
+        Check("FWPM_SUBLAYER0.weight", Off(typeof(FWPM_SUBLAYER0), "weight"), 64);
+        Check("FWPM_FILTER0", Marshal.SizeOf(typeof(FWPM_FILTER0)), 200);
+        Check("FWPM_FILTER0.layerKey", Off(typeof(FWPM_FILTER0), "layerKey"), 64);
+        Check("FWPM_FILTER0.subLayerKey", Off(typeof(FWPM_FILTER0), "subLayerKey"), 80);
+        Check("FWPM_FILTER0.numFilterConditions", Off(typeof(FWPM_FILTER0), "numFilterConditions"), 112);
+        Check("FWPM_FILTER0.filterCondition", Off(typeof(FWPM_FILTER0), "filterCondition"), 120);
+        Check("FWPM_FILTER0.action", Off(typeof(FWPM_FILTER0), "action"), 128);
+        Check("FWPM_FILTER0.filterId", Off(typeof(FWPM_FILTER0), "filterId"), 176);
     }
 
-    static int OffsetOf(Type t, string fieldName) {
-        return Marshal.OffsetOf(t, fieldName).ToInt32();
+    static int Off(Type t, string f) { return Marshal.OffsetOf(t, f).ToInt32(); }
+    static void Check(string label, int actual, int expected) {
+        if (actual != expected) throw new InvalidOperationException(label + ": expected " + expected + ", got " + actual);
     }
 
-    static void AssertLayout(string label, int actual, int expected) {
-        if (actual != expected)
-            throw new Exception(label + " expected " + expected + " but got " + actual);
+    static Exception Fail(string api, uint code) {
+        return new InvalidOperationException(api + " failed (0x" + code.ToString("X8") + ")");
     }
 
-    static void AssertLayouts() {
-        if (IntPtr.Size != 8)
-            throw new Exception("64-bit process required for WFP struct layout.");
+    // ---- lifetime ------------------------------------------------------------------------------
+    IntPtr _engine;
+    bool _inTransaction;
 
-        AssertLayout("FWP_VALUE0.size", Marshal.SizeOf(typeof(FWP_VALUE0)), 16);
-        AssertLayout("FWP_CONDITION_VALUE0.size", Marshal.SizeOf(typeof(FWP_CONDITION_VALUE0)), 16);
-        AssertLayout("FWPM_ACTION0.size", Marshal.SizeOf(typeof(FWPM_ACTION0)), 20);
-        AssertLayout("FWPM_SUBLAYER0.size", Marshal.SizeOf(typeof(FWPM_SUBLAYER0)), 72);
-        AssertLayout("FWPM_SUBLAYER0.weight", OffsetOf(typeof(FWPM_SUBLAYER0), "weight"), 64);
-        AssertLayout("FWPM_FILTER_CONDITION0.size", Marshal.SizeOf(typeof(FWPM_FILTER_CONDITION0)), 40);
-        AssertLayout("FWPM_FILTER_CONDITION0.conditionValue", OffsetOf(typeof(FWPM_FILTER_CONDITION0), "conditionValue"), 24);
-        AssertLayout("FWPM_FILTER0.size", Marshal.SizeOf(typeof(FWPM_FILTER0)), 200);
-        AssertLayout("FWPM_FILTER0.layerKey", OffsetOf(typeof(FWPM_FILTER0), "layerKey"), 64);
-        AssertLayout("FWPM_FILTER0.subLayerKey", OffsetOf(typeof(FWPM_FILTER0), "subLayerKey"), 80);
-        AssertLayout("FWPM_FILTER0.weight", OffsetOf(typeof(FWPM_FILTER0), "weight"), 96);
-        AssertLayout("FWPM_FILTER0.numFilterConditions", OffsetOf(typeof(FWPM_FILTER0), "numFilterConditions"), 112);
-        AssertLayout("FWPM_FILTER0.filterCondition", OffsetOf(typeof(FWPM_FILTER0), "filterCondition"), 120);
-        AssertLayout("FWPM_FILTER0.action", OffsetOf(typeof(FWPM_FILTER0), "action"), 128);
-        AssertLayout("FWPM_FILTER0.reserved", OffsetOf(typeof(FWPM_FILTER0), "reserved"), 168);
-        AssertLayout("FWPM_FILTER0.filterId", OffsetOf(typeof(FWPM_FILTER0), "filterId"), 176);
-        AssertLayout("FWPM_FILTER0.effectiveWeight", OffsetOf(typeof(FWPM_FILTER0), "effectiveWeight"), 184);
+    public Engine() {
+        uint r = FwpmEngineOpen0(IntPtr.Zero, RPC_C_AUTHN_DEFAULT, IntPtr.Zero, IntPtr.Zero, out _engine);
+        if (r != 0) throw Fail("FwpmEngineOpen0", r);
     }
 
-    static uint IpToUint(string ip) {
-        var p = ip.Split('.');
-        if (p.Length != 4) throw new Exception("Invalid IPv4 address: " + ip);
-
-        byte b0, b1, b2, b3;
-        if (!byte.TryParse(p[0], out b0) || !byte.TryParse(p[1], out b1) ||
-            !byte.TryParse(p[2], out b2) || !byte.TryParse(p[3], out b3))
-            throw new Exception("Invalid IPv4 address: " + ip);
-
-        return (uint)(b0 << 24) | (uint)(b1 << 16) | (uint)(b2 << 8) | b3;
+    public void Dispose() {
+        if (_engine == IntPtr.Zero) return;
+        if (_inTransaction) { FwpmTransactionAbort0(_engine); _inTransaction = false; }
+        FwpmEngineClose0(_engine);
+        _engine = IntPtr.Zero;
     }
 
-    static uint PrefixToMask(int prefix) {
-        if (prefix < 0 || prefix > 32)
-            throw new Exception("Invalid CIDR prefix length: " + prefix);
-        if (prefix == 0) return 0;
-        if (prefix >= 32) return 0xFFFFFFFFu;
-        return (uint)(0xFFFFFFFFu << (32 - prefix));
+    public void Begin() {
+        uint r = FwpmTransactionBegin0(_engine, 0);
+        if (r != 0) throw Fail("FwpmTransactionBegin0", r);
+        _inTransaction = true;
     }
 
-    static string ValidateProcessPath(string processPath) {
-        if (string.IsNullOrWhiteSpace(processPath))
-            throw new Exception("ProcessPath is required.");
-        if (!Path.IsPathRooted(processPath))
-            throw new Exception("ProcessPath must be an absolute path.");
-        if (!processPath.EndsWith(".exe", StringComparison.OrdinalIgnoreCase))
-            throw new Exception("ProcessPath must point to an .exe file.");
-        if (!File.Exists(processPath))
-            throw new Exception("ProcessPath does not exist: " + processPath);
-        return Path.GetFullPath(processPath);
+    public void Commit() {
+        uint r = FwpmTransactionCommit0(_engine);
+        _inTransaction = false;
+        if (r != 0) throw Fail("FwpmTransactionCommit0", r);
     }
 
-    static IntPtr OpenEngine() {
-        IntPtr h;
-        uint r = FwpmEngineOpen0(IntPtr.Zero, RPC_C_AUTHN_DEFAULT, IntPtr.Zero, IntPtr.Zero, out h);
-        if (r != 0) throw new Exception("FwpmEngineOpen0=0x" + r.ToString("X8"));
-        return h;
+    public void Abort() {
+        if (!_inTransaction) return;
+        FwpmTransactionAbort0(_engine);
+        _inTransaction = false;
     }
 
-    static IntPtr GetAppIdForProcess(string processPath) {
-        string validatedPath = ValidateProcessPath(processPath);
-        IntPtr appId;
-        uint r = FwpmGetAppIdFromFileName0(validatedPath, out appId);
-        if (r != 0 || appId == IntPtr.Zero)
-            throw new Exception("FwpmGetAppIdFromFileName0=0x" + r.ToString("X8"));
-        return appId;
-    }
-
-    static void EnsureSublayer(IntPtr eng) {
-        IntPtr namePtr = Marshal.StringToHGlobalUni("DBD-Blocker");
+    // ---- enumeration ---------------------------------------------------------------------------
+    public List<FilterInfo> ListFilters() {
+        var result = new List<FilterInfo>();
+        IntPtr enumHandle;
+        uint r = FwpmFilterCreateEnumHandle0(_engine, IntPtr.Zero, out enumHandle);
+        if (r != 0) throw Fail("FwpmFilterCreateEnumHandle0", r);
         try {
-            FWPM_SUBLAYER0 subLayer = new FWPM_SUBLAYER0();
-            subLayer.subLayerKey = SUBLAYER;
-            subLayer.displayData.name = namePtr;
-            subLayer.displayData.description = IntPtr.Zero;
-            subLayer.flags = FWPM_SUBLAYER_FLAG_PERSISTENT;
-            subLayer.providerKey = IntPtr.Zero;
-            subLayer.providerData = default(FWP_BYTE_BLOB);
-            subLayer.weight = 0xFFFF;
-
-            uint r = FwpmSubLayerAdd0(eng, ref subLayer, IntPtr.Zero);
-            if (r != 0 && r != FWP_E_ALREADY_EXISTS)
-                throw new Exception("FwpmSubLayerAdd0=0x" + r.ToString("X8"));
+            const uint batch = 256;
+            while (true) {
+                IntPtr entries; uint returned;
+                r = FwpmFilterEnum0(_engine, enumHandle, batch, out entries, out returned);
+                if (r != 0) throw Fail("FwpmFilterEnum0", r);
+                try {
+                    for (int i = 0; i < returned; i++) {
+                        IntPtr fp = Marshal.ReadIntPtr(entries, i * IntPtr.Size);
+                        var f = (FWPM_FILTER0)Marshal.PtrToStructure(fp, typeof(FWPM_FILTER0));
+                        bool ours = f.subLayerKey == SUBLAYER;
+                        bool legacy = f.subLayerKey == LEGACY_SUBLAYER;
+                        if (!ours && !legacy) continue;
+                        result.Add(Describe(f, legacy));
+                    }
+                } finally {
+                    if (entries != IntPtr.Zero) FwpmFreeMemory0(ref entries);
+                }
+                if (returned < batch) break;
+            }
         } finally {
-            Marshal.FreeHGlobal(namePtr);
+            FwpmFilterDestroyEnumHandle0(_engine, enumHandle);
+        }
+        return result;
+    }
+
+    static FilterInfo Describe(FWPM_FILTER0 f, bool legacy) {
+        var info = new FilterInfo();
+        info.Id = f.filterId;
+        info.Legacy = legacy;
+        info.Persistent = (f.flags & FWPM_FILTER_FLAG_PERSISTENT) != 0;
+        info.Layer = f.layerKey == LAYER_CONNECT_V4 ? "connect-v4"
+                   : f.layerKey == LAYER_CONNECT_V6 ? "connect-v6"
+                   : f.layerKey == LAYER_RECV_V4 ? "recv-v4"
+                   : f.layerKey == LAYER_RECV_V6 ? "recv-v6"
+                   : f.layerKey.ToString();
+        string desc = f.displayData.description == IntPtr.Zero ? null : Marshal.PtrToStringUni(f.displayData.description);
+        if (desc != null && desc.StartsWith(TagPrefix, StringComparison.Ordinal)) info.Region = desc.Substring(TagPrefix.Length);
+
+        int condSize = Marshal.SizeOf(typeof(FWPM_FILTER_CONDITION0));
+        for (int c = 0; c < f.numFilterConditions && f.filterCondition != IntPtr.Zero; c++) {
+            var cond = (FWPM_FILTER_CONDITION0)Marshal.PtrToStructure(IntPtr.Add(f.filterCondition, c * condSize), typeof(FWPM_FILTER_CONDITION0));
+            if (cond.fieldKey != FIELD_REMOTE_IP || cond.conditionValue.ptr == IntPtr.Zero) continue;
+            if (cond.conditionValue.type == FWP_V4_ADDR_MASK) {
+                uint addr = (uint)Marshal.ReadInt32(cond.conditionValue.ptr, 0);
+                uint mask = (uint)Marshal.ReadInt32(cond.conditionValue.ptr, 4);
+                int prefix = 0; for (uint m = mask; (m & 0x80000000u) != 0; m <<= 1) prefix++;
+                info.Cidr = ((addr >> 24) & 0xFF) + "." + ((addr >> 16) & 0xFF) + "." + ((addr >> 8) & 0xFF) + "." + (addr & 0xFF) + "/" + prefix;
+            } else if (cond.conditionValue.type == FWP_V6_ADDR_MASK) {
+                byte[] bytes = new byte[16];
+                Marshal.Copy(cond.conditionValue.ptr, bytes, 0, 16);
+                byte prefix = Marshal.ReadByte(cond.conditionValue.ptr, 16);
+                info.Cidr = new IPAddress(bytes).ToString() + "/" + prefix;
+            }
+        }
+        return info;
+    }
+
+    // ---- provider / sublayer -------------------------------------------------------------------
+    public void EnsureProviderAndSublayer() {
+        IntPtr name = Marshal.StringToHGlobalUni("DBD Server Blocker");
+        IntPtr desc = Marshal.StringToHGlobalUni("Blocks Dead by Daylight from selected AWS regions");
+        IntPtr providerKeyPtr = Marshal.AllocHGlobal(16);
+        try {
+            var provider = new FWPM_PROVIDER0();
+            provider.providerKey = PROVIDER;
+            provider.displayData.name = name;
+            provider.displayData.description = desc;
+            provider.flags = FWPM_PROVIDER_FLAG_PERSISTENT;
+            uint r = FwpmProviderAdd0(_engine, ref provider, IntPtr.Zero);
+            if (r != 0 && r != FWP_E_ALREADY_EXISTS) throw Fail("FwpmProviderAdd0", r);
+
+            Marshal.StructureToPtr(PROVIDER, providerKeyPtr, false);
+            var sub = new FWPM_SUBLAYER0();
+            sub.subLayerKey = SUBLAYER;
+            sub.displayData.name = name;
+            sub.displayData.description = desc;
+            sub.flags = FWPM_SUBLAYER_FLAG_PERSISTENT;
+            sub.providerKey = providerKeyPtr;
+            sub.weight = 0xFFFF;
+            r = FwpmSubLayerAdd0(_engine, ref sub, IntPtr.Zero);
+            if (r != 0 && r != FWP_E_ALREADY_EXISTS) throw Fail("FwpmSubLayerAdd0", r);
+        } finally {
+            Marshal.FreeHGlobal(name);
+            Marshal.FreeHGlobal(desc);
+            Marshal.FreeHGlobal(providerKeyPtr);
         }
     }
 
-    static void WriteCondition(IntPtr buffer, int index, FWPM_FILTER_CONDITION0 condition) {
-        int size = Marshal.SizeOf(typeof(FWPM_FILTER_CONDITION0));
-        IntPtr dest = new IntPtr(buffer.ToInt64() + (index * size));
-        Marshal.StructureToPtr(condition, dest, false);
+    // Deletes the sublayer(s) and the provider. Must only be called when they hold no filter.
+    public void DeleteContainers() {
+        Guid k = SUBLAYER;
+        uint r = FwpmSubLayerDeleteByKey0(_engine, ref k);
+        if (r != 0 && r != FWP_E_SUBLAYER_NOT_FOUND) throw Fail("FwpmSubLayerDeleteByKey0", r);
+        k = LEGACY_SUBLAYER;
+        r = FwpmSubLayerDeleteByKey0(_engine, ref k);
+        if (r != 0 && r != FWP_E_SUBLAYER_NOT_FOUND) throw Fail("FwpmSubLayerDeleteByKey0(legacy)", r);
+        k = PROVIDER;
+        r = FwpmProviderDeleteByKey0(_engine, ref k);
+        if (r != 0 && r != FWP_E_PROVIDER_NOT_FOUND && r != FWP_E_IN_USE) throw Fail("FwpmProviderDeleteByKey0", r);
     }
 
-    static ulong AddCidrFilter(IntPtr eng, string cidr, IntPtr appId) {
-        var slash = cidr.IndexOf('/');
-        string ipStr = slash >= 0 ? cidr.Substring(0, slash) : cidr;
-        int prefix = slash >= 0 ? int.Parse(cidr.Substring(slash + 1)) : 32;
+    public bool ProviderExists() {
+        Guid k = PROVIDER; IntPtr p;
+        uint r = FwpmProviderGetByKey0(_engine, ref k, out p);
+        if (r == 0) { FwpmFreeMemory0(ref p); return true; }
+        return false;
+    }
 
-        uint addr = IpToUint(ipStr);
-        uint mask = PrefixToMask(prefix);
-        bool hasApp = appId != IntPtr.Zero;
-        int numConds = 1 + (hasApp ? 1 : 0);
+    public bool SublayerExists(bool legacy) {
+        Guid k = legacy ? LEGACY_SUBLAYER : SUBLAYER; IntPtr p;
+        uint r = FwpmSubLayerGetByKey0(_engine, ref k, out p);
+        if (r == 0) { FwpmFreeMemory0(ref p); return true; }
+        return false;
+    }
 
-        IntPtr ipMaskPtr = IntPtr.Zero;
-        IntPtr condsPtr = IntPtr.Zero;
-        IntPtr namePtr = IntPtr.Zero;
+    // ---- filters -------------------------------------------------------------------------------
+    public void DeleteFilter(ulong id) {
+        uint r = FwpmFilterDeleteById0(_engine, id);
+        if (r != 0 && r != FWP_E_FILTER_NOT_FOUND) throw Fail("FwpmFilterDeleteById0(" + id + ")", r);
+    }
 
+    public static string ValidateProcessPath(string processPath) {
+        if (string.IsNullOrWhiteSpace(processPath)) throw new ArgumentException("processPath is required.");
+        if (!Path.IsPathRooted(processPath)) throw new ArgumentException("processPath must be absolute.");
+        if (!processPath.EndsWith(".exe", StringComparison.OrdinalIgnoreCase)) throw new ArgumentException("processPath must point to an .exe file.");
+        string full = Path.GetFullPath(processPath);
+        if (!File.Exists(full)) throw new ArgumentException("processPath does not exist: " + full);
+        return full;
+    }
+
+    // Returns the number of filters created. Must be called inside a transaction.
+    public int AddRegion(string region, string[] cidrs, string processPath, bool persistent) {
+        if (string.IsNullOrEmpty(region)) throw new ArgumentException("region is required.");
+        if (cidrs == null || cidrs.Length == 0) throw new ArgumentException("At least one CIDR is required for " + region + ".");
+
+        IntPtr appId;
+        uint r = FwpmGetAppIdFromFileName0(ValidateProcessPath(processPath), out appId);
+        if (r != 0 || appId == IntPtr.Zero) throw Fail("FwpmGetAppIdFromFileName0", r);
+
+        IntPtr name = Marshal.StringToHGlobalUni("DBD Server Blocker");
+        IntPtr tag = Marshal.StringToHGlobalUni(TagPrefix + region);
+        IntPtr providerKeyPtr = Marshal.AllocHGlobal(16);
+        int created = 0;
         try {
-            FWP_V4_ADDR_AND_MASK ipMask = new FWP_V4_ADDR_AND_MASK();
-            ipMask.addr = addr;
-            ipMask.mask = mask;
-            ipMaskPtr = Marshal.AllocHGlobal(Marshal.SizeOf(typeof(FWP_V4_ADDR_AND_MASK)));
-            Marshal.StructureToPtr(ipMask, ipMaskPtr, false);
-
-            int condSize = Marshal.SizeOf(typeof(FWPM_FILTER_CONDITION0));
-            condsPtr = Marshal.AllocHGlobal(condSize * numConds);
-            ZeroMemory(condsPtr, (IntPtr)(condSize * numConds));
-
-            FWPM_FILTER_CONDITION0 ipCondition = new FWPM_FILTER_CONDITION0();
-            ipCondition.fieldKey = FIELD_IP;
-            ipCondition.matchType = FWP_MATCH_EQUAL;
-            ipCondition.conditionValue.type = FWP_V4_ADDR_MASK;
-            ipCondition.conditionValue.ptr = ipMaskPtr;
-            WriteCondition(condsPtr, 0, ipCondition);
-
-            if (hasApp) {
-                FWPM_FILTER_CONDITION0 appCondition = new FWPM_FILTER_CONDITION0();
-                appCondition.fieldKey = FIELD_APP;
-                appCondition.matchType = FWP_MATCH_EQUAL;
-                appCondition.conditionValue.type = FWP_BYTE_BLOB_TYPE;
-                appCondition.conditionValue.ptr = appId;
-                WriteCondition(condsPtr, 1, appCondition);
+            Marshal.StructureToPtr(PROVIDER, providerKeyPtr, false);
+            foreach (string cidr in cidrs) {
+                Cidr parsed = Cidr.Parse(cidr);
+                Guid[] layers = parsed.IsV6
+                    ? new Guid[] { LAYER_CONNECT_V6, LAYER_RECV_V6 }
+                    : new Guid[] { LAYER_CONNECT_V4, LAYER_RECV_V4 };
+                foreach (Guid layer in layers) {
+                    AddFilter(layer, parsed, appId, name, tag, providerKeyPtr, persistent);
+                    created++;
+                }
             }
+        } finally {
+            Marshal.FreeHGlobal(name);
+            Marshal.FreeHGlobal(tag);
+            Marshal.FreeHGlobal(providerKeyPtr);
+            FwpmFreeMemory0(ref appId);
+        }
+        return created;
+    }
 
-            FWPM_FILTER0 filter = new FWPM_FILTER0();
+    void AddFilter(Guid layer, Cidr cidr, IntPtr appId, IntPtr name, IntPtr tag, IntPtr providerKeyPtr, bool persistent) {
+        int condSize = Marshal.SizeOf(typeof(FWPM_FILTER_CONDITION0));
+        IntPtr addrPtr = Marshal.AllocHGlobal(24);
+        IntPtr conds = Marshal.AllocHGlobal(condSize * 2);
+        try {
+            for (int i = 0; i < 24; i++) Marshal.WriteByte(addrPtr, i, 0);
+            var ipCond = new FWPM_FILTER_CONDITION0();
+            ipCond.fieldKey = FIELD_REMOTE_IP;
+            ipCond.matchType = FWP_MATCH_EQUAL;
+            if (cidr.IsV6) {
+                Marshal.Copy(cidr.Bytes, 0, addrPtr, 16);          // network byte order
+                Marshal.WriteByte(addrPtr, 16, (byte)cidr.Prefix);
+                ipCond.conditionValue.type = FWP_V6_ADDR_MASK;
+            } else {
+                uint addr = ((uint)cidr.Bytes[0] << 24) | ((uint)cidr.Bytes[1] << 16) | ((uint)cidr.Bytes[2] << 8) | cidr.Bytes[3];
+                uint mask = cidr.Prefix == 0 ? 0u : 0xFFFFFFFFu << (32 - cidr.Prefix);
+                Marshal.WriteInt32(addrPtr, 0, unchecked((int)addr));   // host byte order
+                Marshal.WriteInt32(addrPtr, 4, unchecked((int)mask));
+                ipCond.conditionValue.type = FWP_V4_ADDR_MASK;
+            }
+            ipCond.conditionValue.ptr = addrPtr;
+            Marshal.StructureToPtr(ipCond, conds, false);
+
+            var appCond = new FWPM_FILTER_CONDITION0();
+            appCond.fieldKey = FIELD_APP_ID;
+            appCond.matchType = FWP_MATCH_EQUAL;
+            appCond.conditionValue.type = FWP_BYTE_BLOB_TYPE;
+            appCond.conditionValue.ptr = appId;
+            Marshal.StructureToPtr(appCond, IntPtr.Add(conds, condSize), false);
+
+            var filter = new FWPM_FILTER0();
             filter.filterKey = Guid.NewGuid();
-            filter.displayData.name = namePtr = Marshal.StringToHGlobalUni("DBD-Block");
-            filter.displayData.description = IntPtr.Zero;
-            filter.flags = FWPM_FILTER_FLAG_PERSISTENT;
-            filter.providerKey = IntPtr.Zero;
-            filter.providerData = default(FWP_BYTE_BLOB);
-            filter.layerKey = LAYER;
+            filter.displayData.name = name;
+            filter.displayData.description = tag;
+            filter.flags = FWPM_FILTER_FLAG_CLEAR_ACTION_RIGHT | (persistent ? FWPM_FILTER_FLAG_PERSISTENT : 0u);
+            filter.providerKey = providerKeyPtr;
+            filter.layerKey = layer;
             filter.subLayerKey = SUBLAYER;
             filter.weight.type = FWP_EMPTY;
-            filter.numFilterConditions = (uint)numConds;
-            filter.filterCondition = condsPtr;
+            filter.numFilterConditions = 2;
+            filter.filterCondition = conds;
             filter.action.type = FWP_ACTION_BLOCK;
-            filter.context = default(FWPM_CONTEXT0);
-            filter.reserved = IntPtr.Zero;
-            filter.filterId = 0;
-            filter.effectiveWeight = default(FWP_VALUE0);
 
-            ulong fid = 0;
-            uint r = FwpmFilterAdd0(eng, ref filter, IntPtr.Zero, out fid);
-            if (r != 0)
-                throw new Exception("FwpmFilterAdd0(" + cidr + ")=0x" + r.ToString("X8"));
-            return fid;
+            ulong id;
+            uint r = FwpmFilterAdd0(_engine, ref filter, IntPtr.Zero, out id);
+            if (r != 0) throw Fail("FwpmFilterAdd0(" + cidr.Text + ")", r);
         } finally {
-            if (namePtr != IntPtr.Zero) Marshal.FreeHGlobal(namePtr);
-            if (condsPtr != IntPtr.Zero) Marshal.FreeHGlobal(condsPtr);
-            if (ipMaskPtr != IntPtr.Zero) Marshal.FreeHGlobal(ipMaskPtr);
+            Marshal.FreeHGlobal(conds);
+            Marshal.FreeHGlobal(addrPtr);
         }
     }
+}
 
-    public static string Block(string cidrsJson, string processPath) {
-        var cidrs = ParseStringArray(cidrsJson);
-        if (cidrs.Length == 0) throw new Exception("At least one CIDR is required.");
+public sealed class Cidr {
+    public byte[] Bytes;
+    public int Prefix;
+    public bool IsV6;
+    public string Text;
 
-        IntPtr appId = IntPtr.Zero;
-        IntPtr eng = IntPtr.Zero;
-        var created = new List<ulong>();
-        bool success = false;
-        try {
-            appId = GetAppIdForProcess(processPath);
-            eng = OpenEngine();
-            EnsureSublayer(eng);
-            foreach (var cidr in cidrs) {
-                created.Add(AddCidrFilter(eng, cidr, appId));
-            }
-            success = true;
-            return "[" + string.Join(",", created) + "]";
-        } finally {
-            if (!success && eng != IntPtr.Zero) {
-                foreach (var fid in created)
-                    FwpmFilterDeleteById0(eng, fid);
-            }
-            if (appId != IntPtr.Zero) FwpmFreeMemory0(ref appId);
-            if (eng != IntPtr.Zero) FwpmEngineClose0(eng);
-        }
+    public static Cidr Parse(string text) {
+        if (string.IsNullOrWhiteSpace(text)) throw new ArgumentException("Empty CIDR.");
+        string s = text.Trim();
+        int slash = s.IndexOf('/');
+        string ipPart = slash >= 0 ? s.Substring(0, slash) : s;
+        IPAddress ip;
+        if (!IPAddress.TryParse(ipPart, out ip)) throw new ArgumentException("Invalid CIDR: " + text);
+        bool v6 = ip.AddressFamily == AddressFamily.InterNetworkV6;
+        if (!v6 && ipPart.Split('.').Length != 4) throw new ArgumentException("Invalid IPv4 CIDR: " + text);
+        int max = v6 ? 128 : 32;
+        int prefix = max;
+        if (slash >= 0 && (!int.TryParse(s.Substring(slash + 1), out prefix) || prefix < 0 || prefix > max))
+            throw new ArgumentException("Invalid prefix length: " + text);
+        if (!v6 && prefix < 8) throw new ArgumentException("Refusing overly broad IPv4 range: " + text);
+        if (v6 && prefix < 16) throw new ArgumentException("Refusing overly broad IPv6 range: " + text);
+
+        byte[] bytes = ip.GetAddressBytes();
+        for (int bit = prefix; bit < max; bit++) bytes[bit / 8] &= (byte)~(0x80 >> (bit % 8));   // clear host bits
+        var c = new Cidr();
+        c.Bytes = bytes; c.Prefix = prefix; c.IsV6 = v6;
+        c.Text = new IPAddress(bytes).ToString() + "/" + prefix;
+        return c;
     }
+}
 
-    public static int Purge() {
-        IntPtr eng = OpenEngine();
-        IntPtr eh = IntPtr.Zero;
-        var toDelete = new List<ulong>();
-        try {
-            uint r = FwpmFilterCreateEnumHandle0(eng, IntPtr.Zero, out eh);
-            if (r != 0) return -1;
-
-            while (true) {
-                IntPtr entries = IntPtr.Zero;
-                uint returned = 0;
-                r = FwpmFilterEnum0(eng, eh, 200, out entries, out returned);
-                if (r != 0 || returned == 0) {
-                    if (entries != IntPtr.Zero) FwpmFreeMemory0(ref entries);
-                    break;
-                }
-
-                for (uint i = 0; i < returned; i++) {
-                    IntPtr fp = Marshal.ReadIntPtr(entries, (int)(i * IntPtr.Size));
-                    FWPM_FILTER0 filter = (FWPM_FILTER0)Marshal.PtrToStructure(fp, typeof(FWPM_FILTER0));
-                    if (filter.subLayerKey == SUBLAYER) {
-                        toDelete.Add(filter.filterId);
-                    }
-                }
-                FwpmFreeMemory0(ref entries);
-                if (returned < 200) break;
-            }
-
-            FwpmFilterDestroyEnumHandle0(eng, eh);
-            eh = IntPtr.Zero;
-
-            int deleted = 0;
-            foreach (var fid in toDelete) {
-                uint dr = FwpmFilterDeleteById0(eng, fid);
-                if (dr == 0 || dr == FWP_E_FILTER_NOT_FOUND) deleted++;
-            }
-            return deleted;
-        } finally {
-            if (eh != IntPtr.Zero) FwpmFilterDestroyEnumHandle0(eng, eh);
-            FwpmEngineClose0(eng);
-        }
-    }
-
-    public static bool Unblock(string filterIdsJson) {
-        var ids = ParseUlongArray(filterIdsJson);
-        if (ids.Length == 0) return true;
-        IntPtr eng = OpenEngine();
-        try {
-            bool ok = true;
-            foreach (var fid in ids) {
-                uint r = FwpmFilterDeleteById0(eng, fid);
-                if (r != 0 && r != FWP_E_FILTER_NOT_FOUND) ok = false;
-            }
-            return ok;
-        } finally {
-            FwpmEngineClose0(eng);
-        }
-    }
-
-    public static bool CheckExists(string filterIdsJson) {
-        var ids = ParseUlongArray(filterIdsJson);
-        if (ids.Length == 0) return false;
-        IntPtr eng = OpenEngine();
-        try {
-            foreach (var fid in ids) {
-                IntPtr fp = IntPtr.Zero;
-                uint r = FwpmFilterGetById0(eng, fid, out fp);
-                if (r != 0) return false;
-                FwpmFreeMemory0(ref fp);
-            }
-            return true;
-        } finally {
-            FwpmEngineClose0(eng);
-        }
-    }
-
-    static string[] ParseStringArray(string json) {
-        json = json.Trim().TrimStart('[').TrimEnd(']');
-        if (json.Length == 0) return new string[0];
-        var result = new List<string>();
-        foreach (var tok in json.Split(',')) {
-            var s = tok.Trim().Trim('"');
-            if (s.Length > 0) result.Add(s);
-        }
-        return result.ToArray();
-    }
-
-    static ulong[] ParseUlongArray(string json) {
-        json = json.Trim().TrimStart('[').TrimEnd(']');
-        if (json.Length == 0) return new ulong[0];
-        var result = new List<ulong>();
-        foreach (var tok in json.Split(',')) {
-            var s = tok.Trim().Trim('"');
-            ulong v;
-            if (s.Length > 0 && ulong.TryParse(s, out v)) result.Add(v);
-        }
-        return result.ToArray();
-    }
 }
 '@
 }
 
+function Get-OwnedState([DbdWfp.Engine]$engine) {
+    $filters = $engine.ListFilters()
+    $regions = @{}
+    $legacy = 0
+    $untagged = 0
+    foreach ($f in $filters) {
+        if ($f.Legacy) { $legacy++; continue }
+        if (-not $f.Region) { $untagged++; continue }
+        if (-not $regions.ContainsKey($f.Region)) {
+            $regions[$f.Region] = @{ filters = 0; persistent = $true; cidrs = New-Object System.Collections.Generic.SortedSet[string] }
+        }
+        $entry = $regions[$f.Region]
+        $entry.filters++
+        if (-not $f.Persistent) { $entry.persistent = $false }
+        if ($f.Cidr) { [void]$entry.cidrs.Add($f.Cidr) }
+    }
+    $out = @{}
+    foreach ($k in $regions.Keys) {
+        $e = $regions[$k]
+        $out[$k] = @{ filters = $e.filters; persistent = $e.persistent; cidrs = @($e.cidrs) }
+    }
+    return @{
+        filters  = $filters
+        regions  = $out
+        legacy   = $legacy
+        untagged = $untagged
+    }
+}
+
+function Remove-LegacyFirewallRules {
+    # v1.0 wrote Windows Firewall rules named Block_DBD_<region>[_<city>] straight into the registry.
+    $removed = 0
+    $key = 'HKLM:\SYSTEM\CurrentControlSet\Services\SharedAccess\Parameters\FirewallPolicy\FirewallRules'
+    try {
+        $props = Get-ItemProperty -Path $key -ErrorAction Stop
+        $names = @($props.PSObject.Properties | Where-Object { $_.Name -like 'Block_DBD_*' } | ForEach-Object { $_.Name })
+        foreach ($n in $names) {
+            try {
+                Remove-NetFirewallRule -Name $n -ErrorAction Stop
+            } catch {
+                Remove-ItemProperty -Path $key -Name $n -ErrorAction SilentlyContinue
+            }
+            $removed++
+        }
+    } catch { }
+    return $removed
+}
+
+function Read-StdinJson {
+    $raw = [Console]::In.ReadToEnd()
+    if ([string]::IsNullOrWhiteSpace($raw)) { throw 'Expected a JSON payload on stdin.' }
+    return ConvertFrom-Json -InputObject $raw
+}
+
+$engine = $null
 try {
+    $engine = New-Object DbdWfp.Engine
+
     switch ($Action) {
-        'block' {
-            $decodedCidrsJson = Decode-Base64Json $CidrsJsonBase64 'CIDRs JSON'
-            if ($null -ne $decodedCidrsJson) {
-                $CidrsJson = $decodedCidrsJson
+        'list' {
+            $state = Get-OwnedState $engine
+            Write-Result @{
+                ok              = $true
+                regions         = $state.regions
+                legacyFilters   = $state.legacy
+                untaggedFilters = $state.untagged
+                provider        = $engine.ProviderExists()
+                sublayer        = $engine.SublayerExists($false)
+                legacySublayer  = $engine.SublayerExists($true)
             }
-            $CidrsJson = Normalize-StringArrayJson $CidrsJson 'CIDRs'
-            Write-Output ([WfpMgr]::Block($CidrsJson, $ProcessPath))
         }
-        'unblock' {
-            $decodedFilterIdsJson = Decode-Base64Json $FilterIdsJsonBase64 'filter IDs JSON'
-            if ($null -ne $decodedFilterIdsJson) {
-                $FilterIdsJson = $decodedFilterIdsJson
+
+        'apply' {
+            $payload = Read-StdinJson
+            $processPath = ''
+            if ($payload.PSObject.Properties['processPath']) { $processPath = [string]$payload.processPath }
+            $sets = @()
+            if ($payload.PSObject.Properties['set'] -and $payload.set) { $sets = @($payload.set) }
+            $removes = @()
+            if ($payload.PSObject.Properties['remove'] -and $payload.remove) { $removes = @($payload.remove | ForEach-Object { [string]$_ }) }
+
+            # Validate everything before touching WFP.
+            if ($sets.Count -gt 0) { [void][DbdWfp.Engine]::ValidateProcessPath($processPath) }
+            foreach ($s in $sets) {
+                foreach ($prop in 'region', 'cidrs') {
+                    if (-not $s.PSObject.Properties[$prop]) { throw "Each 'set' entry needs a '$prop' property." }
+                }
+                if (-not $s.PSObject.Properties['persistent']) { $s | Add-Member -NotePropertyName persistent -NotePropertyValue $false }
+                if (-not ($s.region -is [string]) -or $s.region -notmatch '^[a-z]{2}(-[a-z]+)+-\d$') { throw "Invalid region id: $($s.region)" }
+                if (@($s.cidrs).Count -eq 0) { throw "No CIDR given for $($s.region)." }
+                foreach ($c in @($s.cidrs)) { [void][DbdWfp.Cidr]::Parse([string]$c) }
             }
-            $FilterIdsJson = Normalize-UlongArrayJson $FilterIdsJson 'filter IDs'
-            $ok = [WfpMgr]::Unblock($FilterIdsJson)
-            Write-Output $ok.ToString().ToLowerInvariant()
-        }
-        'check' {
-            $decodedFilterIdsJson = Decode-Base64Json $FilterIdsJsonBase64 'filter IDs JSON'
-            if ($null -ne $decodedFilterIdsJson) {
-                $FilterIdsJson = $decodedFilterIdsJson
+            foreach ($r in $removes) {
+                if ($r -notmatch '^[a-z]{2}(-[a-z]+)+-\d$') { throw "Invalid region id: $r" }
             }
-            $FilterIdsJson = Normalize-UlongArrayJson $FilterIdsJson 'filter IDs'
-            $ok = [WfpMgr]::CheckExists($FilterIdsJson)
-            Write-Output $ok.ToString().ToLowerInvariant()
+
+            $touched = @{}
+            foreach ($s in $sets) { $touched[[string]$s.region] = $true }
+            foreach ($r in $removes) { $touched[$r] = $true }
+
+            $before = Get-OwnedState $engine
+            $created = 0
+            $deleted = 0
+
+            $engine.Begin()
+            try {
+                if ($sets.Count -gt 0) { $engine.EnsureProviderAndSublayer() }
+                foreach ($f in $before.filters) {
+                    if (-not $f.Legacy -and $f.Region -and $touched.ContainsKey($f.Region)) {
+                        $engine.DeleteFilter($f.Id)
+                        $deleted++
+                    }
+                }
+                foreach ($s in $sets) {
+                    $cidrs = [string[]]@($s.cidrs | ForEach-Object { [string]$_ })
+                    $created += $engine.AddRegion([string]$s.region, $cidrs, $processPath, [bool]$s.persistent)
+                }
+                $engine.Commit()
+            } catch {
+                $engine.Abort()
+                throw
+            }
+
+            $after = Get-OwnedState $engine
+            if ($after.filters.Count -eq 0) {
+                $engine.Begin()
+                try { $engine.DeleteContainers(); $engine.Commit() } catch { $engine.Abort() }
+            }
+
+            # Verify: every requested region exists with the expected filter count, every removed region is gone.
+            $problems = @()
+            foreach ($s in $sets) {
+                $expected = 2 * @($s.cidrs).Count
+                $actual = if ($after.regions.ContainsKey([string]$s.region)) { $after.regions[[string]$s.region].filters } else { 0 }
+                if ($actual -ne $expected) { $problems += "$($s.region): expected $expected filters, found $actual" }
+            }
+            foreach ($r in $removes) {
+                if ($after.regions.ContainsKey($r)) { $problems += "${r}: $($after.regions[$r].filters) filters still present" }
+            }
+            if ($problems.Count -gt 0) { throw ('Verification failed: ' + ($problems -join '; ')) }
+
+            Write-Result @{
+                ok      = $true
+                created = $created
+                deleted = $deleted
+                regions = $after.regions
+            }
         }
+
         'purge' {
-            $n = [WfpMgr]::Purge()
-            Write-Output $n
-        }
-        default {
-            Write-Error "Unknown action: $Action"
-            exit 1
+            $before = Get-OwnedState $engine
+            $engine.Begin()
+            try {
+                foreach ($f in $before.filters) { $engine.DeleteFilter($f.Id) }
+                $engine.DeleteContainers()
+                $engine.Commit()
+            } catch {
+                $engine.Abort()
+                throw
+            }
+            $legacyRules = Remove-LegacyFirewallRules
+            $after = Get-OwnedState $engine
+            $clean = ($after.filters.Count -eq 0) -and -not $engine.ProviderExists() -and -not $engine.SublayerExists($false) -and -not $engine.SublayerExists($true)
+            if (-not $clean) { throw "Purge incomplete: $($after.filters.Count) filters remain." }
+            Write-Result @{
+                ok                  = $true
+                deleted             = $before.filters.Count
+                legacyFilters       = $before.legacy
+                legacyFirewallRules = $legacyRules
+            }
         }
     }
 } catch {
-    Write-Error $_.Exception.Message
+    $msg = $_.Exception.Message
+    if ($_.Exception.InnerException) { $msg = $_.Exception.InnerException.Message }
+    Write-Result @{ ok = $false; error = $msg }
     exit 1
+} finally {
+    if ($engine) { $engine.Dispose() }
 }

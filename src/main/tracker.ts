@@ -1,0 +1,202 @@
+// Live game-server tracker: owns the etw-tracker.ps1 process and maps observed IPs to AWS regions.
+import { execFile, type ChildProcess } from 'child_process'
+import { createInterface } from 'readline'
+import { join } from 'path'
+import { CidrMatcher } from './cidr'
+import { getAllRanges } from './ips'
+import { getScriptPath } from './paths'
+import { spawnScript } from './powershell'
+import { DBD_PROCESS_NAMES } from './settings'
+import type { LogEmitter } from './blocker'
+
+const ETW_SESSION = 'DBD-Blocker-ETW'
+
+interface TrackerLine {
+  dbdRunning: boolean
+  dbdPid: number
+  current_server: string | null
+  currentIp: string | null
+  confidence: number
+  candidates: Array<{ ip: string; port: number; score: number; lastSeen: number; count: number; bytes?: number; v6?: boolean }>
+  udpPorts: number[]
+  exitlagRunning: boolean
+  t: number
+}
+
+export interface TrackerResult {
+  dbdRunning: boolean
+  current_server: string | null
+  currentIp: string | null
+  currentRegion: string | null
+  /** The game is talking to a server inside a region the user blocked. */
+  blockedRegionHit: boolean
+  confidence: number
+  candidates: Array<{ ip: string; port: number; score: number; lastSeen: number; count: number; regionId: string | null }>
+  udpPorts: number[]
+  dbdPid: number
+  exitlagRunning: boolean
+}
+
+export const EMPTY_TRACKER: TrackerResult = {
+  dbdRunning: false, current_server: null, currentIp: null, currentRegion: null, blockedRegionHit: false,
+  confidence: 0, candidates: [], udpPorts: [], dbdPid: 0, exitlagRunning: false,
+}
+
+export interface TrackerDeps {
+  log: LogEmitter
+  emit: (result: TrackerResult) => void
+  isBlocked: (regionId: string) => boolean
+}
+
+let proc: ChildProcess | null = null
+let last: TrackerResult = { ...EMPTY_TRACKER }
+let matcher: CidrMatcher | null = null
+let lastUnknownIp: string | null = null
+let lastLeakKey: string | null = null
+
+export function getTrackerState(): TrackerResult {
+  return last
+}
+
+export function invalidateRegionMatcher(): void {
+  matcher = null
+}
+
+async function getMatcher(): Promise<CidrMatcher> {
+  if (matcher) return matcher
+  const m = new CidrMatcher()
+  for (const [regionId, cidrs] of Object.entries(await getAllRanges())) m.add(regionId, cidrs)
+  matcher = m
+  return m
+}
+
+export function resetTracker(deps: TrackerDeps): void {
+  last = { ...last, current_server: null, currentIp: null, currentRegion: null, blockedRegionHit: false, confidence: 0, candidates: [] }
+  lastLeakKey = null
+  deps.emit(last)
+}
+
+async function handleLine(line: string, deps: TrackerDeps): Promise<void> {
+  let data: TrackerLine
+  try {
+    data = JSON.parse(line) as TrackerLine
+  } catch {
+    return
+  }
+
+  if (!data.dbdRunning) {
+    if (last.dbdRunning) lastLeakKey = null
+    last = { ...EMPTY_TRACKER, exitlagRunning: data.exitlagRunning ?? false }
+    deps.emit(last)
+    return
+  }
+
+  const m = await getMatcher()
+  const candidates = (data.candidates ?? []).map((c) => ({
+    ip: c.ip, port: c.port, score: c.score, lastSeen: c.lastSeen, count: c.count,
+    regionId: m.match(c.ip),
+  }))
+  const currentIp = data.currentIp ?? null
+  const currentRegion = currentIp ? m.match(currentIp) : null
+  const blockedRegionHit = !!currentRegion && deps.isBlocked(currentRegion)
+  const prev = last
+
+  last = {
+    dbdRunning: true,
+    current_server: data.current_server ?? null,
+    currentIp,
+    currentRegion,
+    blockedRegionHit,
+    confidence: data.confidence ?? 0,
+    candidates,
+    udpPorts: data.udpPorts ?? [],
+    dbdPid: data.dbdPid ?? 0,
+    exitlagRunning: data.exitlagRunning ?? false,
+  }
+
+  if (currentRegion && currentRegion !== prev.currentRegion) {
+    deps.log('success', `[Tracker] Game server: ${currentRegion} (${data.current_server}) confidence=${Math.round(last.confidence * 100)}%`)
+  }
+  if (currentIp && !currentRegion && last.confidence >= 0.6 && currentIp !== lastUnknownIp) {
+    lastUnknownIp = currentIp
+    deps.log('warning', `[Tracker] Game server ${data.current_server} is not in any known AWS region range (relay, VPN or non-AWS host)`)
+  }
+  const leakKey = blockedRegionHit ? `${currentRegion}|${currentIp}` : null
+  if (leakKey && leakKey !== lastLeakKey && last.confidence >= 0.6) {
+    deps.log('error', `[Tracker] Connected to ${currentRegion} although it is blocked. The game was probably started before the block: restart Dead by Daylight. If it persists, run Refresh IPs.`)
+  }
+  lastLeakKey = leakKey
+  if (data.exitlagRunning && !prev.exitlagRunning) {
+    deps.log('warning', '[Tracker] ExitLag detected: the observed server may be a relay instead of the real game server')
+  }
+
+  deps.emit(last)
+}
+
+export function startTracker(deps: TrackerDeps): void {
+  if (proc) return
+  const child = spawnScript(getScriptPath('etw-tracker.ps1'), ['-ProcessNames', DBD_PROCESS_NAMES.join(',')])
+  proc = child
+  deps.log('info', '[Tracker] Starting...')
+
+  const rl = createInterface({ input: child.stdout! })
+  rl.on('line', (line) => {
+    const trimmed = line.trim()
+    if (trimmed) void handleLine(trimmed, deps)
+  })
+
+  child.stderr?.setEncoding('utf8')
+  child.stderr?.on('data', (d: string) => {
+    for (const msg of d.split(/\r?\n/)) if (msg.trim()) deps.log('step', msg.trim())
+  })
+  child.stdin?.on('error', () => { /* process already gone */ })
+
+  child.on('close', (code) => {
+    if (proc === child) proc = null
+    rl.close()
+    last = { ...EMPTY_TRACKER }
+    deps.emit(last)
+    deps.log(code === 0 ? 'info' : 'warning', `[Tracker] Stopped (code=${code})`)
+  })
+}
+
+/** Stops a leftover tracking session (e.g. after a power loss mid-tracking). Harmless when none exists. */
+export function stopEtwSession(): Promise<void> {
+  const root = process.env.SystemRoot ?? 'C:\\Windows'
+  return new Promise((resolve) => {
+    execFile(join(root, 'System32', 'logman.exe'), ['stop', ETW_SESSION, '-ets'], { windowsHide: true, timeout: 10_000 }, () => resolve())
+  })
+}
+
+/** Graceful stop ("stop" on stdin) so the ETW session is closed; force-kill + logman as a fallback. */
+export function stopTracker(timeoutMs = 4000): Promise<void> {
+  const child = proc
+  if (!child) return Promise.resolve()
+  proc = null
+  return new Promise((resolve) => {
+    let done = false
+    const finish = async (forced: boolean): Promise<void> => {
+      if (done) return
+      done = true
+      clearTimeout(timer)
+      if (forced) await stopEtwSession()
+      resolve()
+    }
+    const timer = setTimeout(() => {
+      child.kill()
+      void finish(true)
+    }, timeoutMs)
+    child.once('close', () => void finish(false))
+    try {
+      child.stdin?.write('stop\n')
+      child.stdin?.end()
+    } catch {
+      child.kill()
+      void finish(true)
+    }
+  })
+}
+
+export function isTrackerRunning(): boolean {
+  return proc !== null
+}

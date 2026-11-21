@@ -1,602 +1,527 @@
-#Requires -Version 5.0
-# DBD Game Server Tracker - ETW (Event Tracing for Windows)
-# Uses Microsoft-Windows-Kernel-Network provider to capture real-time UDP events.
-# Detects the actual game server IP:port from DBD's UDP traffic.
-# Outputs one JSON line per poll tick to stdout; debug logs go to stderr.
+#Requires -Version 5.1
+# DBD Server Blocker - live game server tracker (ETW, Microsoft-Windows-Kernel-Network).
+#
+# Listens to the kernel UDP events of the Dead by Daylight process (IPv4 + IPv6), aggregates the remote
+# endpoints in a rolling window and prints one JSON line per tick on stdout. Diagnostics go to stderr.
+#
+# Lifecycle: the real-time ETW session only exists while the game runs. "stop" on stdin or a normal exit
+# stops it; if the app crashes, a guardian process (see below) stops it, so no kernel session is left behind.
 param(
-    [string]$DbdProcessName = 'DeadByDaylight-Win64-Shipping',
+    [string[]]$ProcessNames = @('DeadByDaylight-Win64-Shipping', 'DeadByDaylight-WinGDK-Shipping'),
     [ValidateRange(100, 5000)]
-    [int]$PollMs     = 500,
+    [int]$PollMs = 500,
     [ValidateRange(1, 60)]
     [int]$WindowSecs = 5
 )
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
+[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 
-function Assert-64BitProcess {
-    if (-not [Environment]::Is64BitProcess) {
-        throw '64-bit PowerShell is required for the ETW tracker.'
-    }
+function Log([string]$msg) { [Console]::Error.WriteLine("[ETW-Tracker] $msg") }
+
+# With -File, "a,b" arrives as a single string: split it ourselves.
+$ProcessNames = @($ProcessNames | ForEach-Object { $_ -split ',' } | ForEach-Object { $_.Trim() -replace '\.exe$', '' } | Where-Object { $_ })
+
+if (-not [Environment]::Is64BitProcess) {
+    Log '64-bit PowerShell is required.'
+    exit 1
 }
 
-Assert-64BitProcess
-
-# --- Embedded C# - ETW real-time session for UDP kernel network events ---
-$csharpCode = @'
+if (-not ([System.Management.Automation.PSTypeName]'DbdEtw.Tracker').Type) {
+    try {
+        Add-Type -Language CSharp -TypeDefinition @'
 using System;
-using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.Globalization;
+using System.Linq;
+using System.Net;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Threading;
 
-public static class EtwNet {
+namespace DbdEtw {
 
-    static readonly Guid KERNEL_NETWORK = new Guid(
-        0x7DD42A49, 0x5329, 0x4832, 0x8D, 0xFD, 0x43, 0xD9, 0x79, 0x15, 0x3A, 0x88);
-    const string SESSION = "DBD-Blocker-ETW";
+public static class Tracker {
+    public const string SessionName = "DBD-Blocker-ETW";
 
-    const uint EVENT_TRACE_REAL_TIME_MODE      = 0x00000100;
-    const uint PROCESS_TRACE_MODE_REAL_TIME    = 0x00000100;
+    static readonly Guid KERNEL_NETWORK = new Guid("7dd42a49-5329-4832-8dfd-43d979153a88");
+    const ulong KEYWORD_IPV4 = 0x10;
+    const ulong KEYWORD_IPV6 = 0x20;
+    const byte TRACE_LEVEL_INFORMATION = 4;
+
+    // Microsoft-Windows-Kernel-Network event ids (see Get-WinEvent -ListProvider Microsoft-Windows-Kernel-Network)
+    const ushort UDP4_SEND = 42, UDP4_RECV = 43, UDP6_SEND = 58, UDP6_RECV = 59;
+
+    const uint EVENT_TRACE_REAL_TIME_MODE = 0x00000100;
+    const uint PROCESS_TRACE_MODE_REAL_TIME = 0x00000100;
     const uint PROCESS_TRACE_MODE_EVENT_RECORD = 0x10000000;
-    const uint WNODE_FLAG_TRACED_GUID          = 0x00020000;
-    const int  EVENT_TRACE_CONTROL_STOP        = 1;
-    const int  EVENT_CONTROL_CODE_ENABLE       = 1;
-    const byte TRACE_LEVEL_VERBOSE             = 5;
-    const ulong KEYWORD_UDPIP                  = 0x10;
+    const uint WNODE_FLAG_TRACED_GUID = 0x00020000;
+    const int EVENT_TRACE_CONTROL_STOP = 1;
+    const int EVENT_CONTROL_CODE_ENABLE_PROVIDER = 1;
+    const int ERROR_WMI_INSTANCE_NOT_FOUND = 4201;
+    const long INVALID_PROCESSTRACE_HANDLE = -1;
 
-    static long _sessionHandle;
-    static long _traceHandle = -1;
-    static Thread _thread;
-    static volatile int _filterPid;
-    static ConcurrentQueue<NetEvent> _queue = new ConcurrentQueue<NetEvent>();
-    static int _callbackCount;
-
-    static Delegate _callbackKeepAlive;
-    static IntPtr _loggerNamePtr = IntPtr.Zero;
-
-    public class NetEvent {
-        public string RemoteIp;
-        public int RemotePort;
-        public int LocalPort;
-        public int Pid;
-        public long Ts;
-    }
-
+    // ---- native structures ---------------------------------------------------------------------
     [StructLayout(LayoutKind.Sequential)]
     struct WNODE_HEADER {
-        public uint BufferSize;
-        public uint ProviderId;
-        public ulong HistoricalContext;
-        public long TimeStamp;
-        public Guid Guid;
-        public uint ClientContext;
-        public uint Flags;
+        public uint BufferSize; public uint ProviderId; public ulong HistoricalContext; public long TimeStamp;
+        public Guid Guid; public uint ClientContext; public uint Flags;
     }
 
     [StructLayout(LayoutKind.Sequential)]
     struct EVENT_TRACE_PROPERTIES {
         public WNODE_HEADER Wnode;
-        public uint BufferSize;
-        public uint MinimumBuffers;
-        public uint MaximumBuffers;
-        public uint MaximumFileSize;
-        public uint LogFileMode;
-        public uint FlushTimer;
-        public uint EnableFlags;
+        public uint BufferSize, MinimumBuffers, MaximumBuffers, MaximumFileSize, LogFileMode, FlushTimer, EnableFlags;
         public int AgeLimit;
-        public uint NumberOfBuffers;
-        public uint FreeBuffers;
-        public uint EventsLost;
-        public uint BuffersWritten;
-        public uint LogBuffersLost;
-        public uint RealTimeBuffersLost;
+        public uint NumberOfBuffers, FreeBuffers, EventsLost, BuffersWritten, LogBuffersLost, RealTimeBuffersLost;
         public IntPtr LoggerThreadId;
-        public uint LogFileNameOffset;
-        public uint LoggerNameOffset;
+        public uint LogFileNameOffset, LoggerNameOffset;
     }
 
     [StructLayout(LayoutKind.Sequential)]
-    struct EVENT_DESCRIPTOR {
-        public ushort Id;
-        public byte Version;
-        public byte Channel;
-        public byte Level;
-        public byte Opcode;
-        public ushort Task;
-        public ulong Keyword;
-    }
+    struct EVENT_DESCRIPTOR { public ushort Id; public byte Version, Channel, Level, Opcode; public ushort Task; public ulong Keyword; }
 
     [StructLayout(LayoutKind.Sequential)]
     struct EVENT_HEADER {
-        public ushort Size;
-        public ushort HeaderType;
-        public ushort Flags;
-        public ushort EventProperty;
-        public uint ThreadId;
-        public uint ProcessId;
-        public long TimeStamp;
-        public Guid ProviderId;
-        public EVENT_DESCRIPTOR EventDescriptor;
-        public ulong ProcessorTime;
-        public Guid ActivityId;
+        public ushort Size, HeaderType, Flags, EventProperty; public uint ThreadId, ProcessId; public long TimeStamp;
+        public Guid ProviderId; public EVENT_DESCRIPTOR EventDescriptor; public ulong ProcessorTime; public Guid ActivityId;
     }
 
     [StructLayout(LayoutKind.Sequential)]
     struct EVENT_RECORD {
-        public EVENT_HEADER EventHeader;
-        public uint BufferContext;
-        public ushort ExtendedDataCount;
-        public ushort UserDataLength;
-        public IntPtr ExtendedData;
-        public IntPtr UserData;
-        public IntPtr UserContext;
+        public EVENT_HEADER EventHeader; public uint BufferContext; public ushort ExtendedDataCount, UserDataLength;
+        public IntPtr ExtendedData, UserData, UserContext;
     }
 
     [StructLayout(LayoutKind.Sequential)]
     struct EVENT_TRACE_HEADER {
-        public ushort Size;
-        public ushort FieldTypeFlags;
-        public uint Version;
-        public uint ThreadId;
-        public uint ProcessId;
-        public long TimeStamp;
-        public Guid Guid;
-        public ulong ProcessorTime;
+        public ushort Size, FieldTypeFlags; public uint Version, ThreadId, ProcessId; public long TimeStamp; public Guid Guid; public ulong ProcessorTime;
     }
 
     [StructLayout(LayoutKind.Sequential)]
     struct EVENT_TRACE {
-        public EVENT_TRACE_HEADER Header;
-        public uint InstanceId;
-        public uint ParentInstanceId;
-        public Guid ParentGuid;
-        public IntPtr MofData;
-        public uint MofLength;
-        public uint ClientContext;
+        public EVENT_TRACE_HEADER Header; public uint InstanceId, ParentInstanceId; public Guid ParentGuid;
+        public IntPtr MofData; public uint MofLength, ClientContext;
     }
 
     [StructLayout(LayoutKind.Sequential)]
     struct TRACE_LOGFILE_HEADER {
-        public uint BufferSize;
-        public uint Version;
-        public uint ProviderVersion;
-        public uint NumberOfProcessors;
-        public long EndTime;
-        public uint TimerResolution;
-        public uint MaximumFileSize;
-        public uint LogFileMode;
-        public uint BuffersWritten;
-        [MarshalAs(UnmanagedType.ByValArray, SizeConst = 16)]
-        public byte[] LogInstanceOrData;
-        public IntPtr LoggerName;
-        public IntPtr LogFileName;
-        [MarshalAs(UnmanagedType.ByValArray, SizeConst = 172)]
-        public byte[] TimeZoneInformation;
-        public long BootTime;
-        public long PerfFreq;
-        public long StartTime;
-        public uint ReservedFlags;
-        public uint BuffersLost;
+        public uint BufferSize, Version, ProviderVersion, NumberOfProcessors; public long EndTime;
+        public uint TimerResolution, MaximumFileSize, LogFileMode, BuffersWritten;
+        [MarshalAs(UnmanagedType.ByValArray, SizeConst = 16)] public byte[] LogInstanceOrData;
+        public IntPtr LoggerName, LogFileName;
+        [MarshalAs(UnmanagedType.ByValArray, SizeConst = 172)] public byte[] TimeZoneInformation;
+        public long BootTime, PerfFreq, StartTime; public uint ReservedFlags, BuffersLost;
     }
 
     [StructLayout(LayoutKind.Sequential)]
     struct EVENT_TRACE_LOGFILEW {
-        public IntPtr LogFileName;
-        public IntPtr LoggerName;
-        public long CurrentTime;
-        public uint BuffersRead;
-        public uint ProcessTraceMode;
-        public EVENT_TRACE CurrentEvent;
-        public TRACE_LOGFILE_HEADER LogfileHeader;
-        public IntPtr BufferCallback;
-        public uint BufferSize;
-        public uint Filled;
-        public uint EventsLost;
-        public IntPtr EventRecordCallback;
-        public uint IsKernelTrace;
-        public IntPtr Context;
-    }
-
-    [StructLayout(LayoutKind.Sequential, Pack = 1)]
-    struct UdpIpV4Payload {
-        public uint Pid;
-        public uint Size;
-        public uint DestinationAddress;
-        public uint SourceAddress;
-        public ushort DestinationPort;
-        public ushort SourcePort;
+        public IntPtr LogFileName, LoggerName; public long CurrentTime; public uint BuffersRead, ProcessTraceMode;
+        public EVENT_TRACE CurrentEvent; public TRACE_LOGFILE_HEADER LogfileHeader; public IntPtr BufferCallback;
+        public uint BufferSize, Filled, EventsLost; public IntPtr EventRecordCallback; public uint IsKernelTrace; public IntPtr Context;
     }
 
     [UnmanagedFunctionPointer(CallingConvention.StdCall)]
-    delegate void EventRecordCallbackDelegate(IntPtr eventRecord);
+    delegate void EventRecordCallback(IntPtr eventRecord);
 
-    [DllImport("advapi32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
-    static extern int StartTraceW(out long sessionHandle, string sessionName, IntPtr properties);
-    [DllImport("advapi32.dll", SetLastError = true)]
-    static extern int EnableTraceEx2(long traceHandle, ref Guid providerId, int controlCode,
-        byte level, ulong matchAnyKeyword, ulong matchAllKeyword, int timeout, IntPtr enableParameters);
-    [DllImport("advapi32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
-    static extern long OpenTraceW(IntPtr logfile);
-    [DllImport("advapi32.dll", SetLastError = true)]
-    static extern int ProcessTrace([In] long[] handleArray, int handleCount, IntPtr startTime, IntPtr endTime);
-    [DllImport("advapi32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
-    static extern int ControlTraceW(long sessionHandle, string sessionName, IntPtr properties, int controlCode);
-    [DllImport("advapi32.dll", SetLastError = true)]
-    static extern int CloseTrace(long traceHandle);
-    [DllImport("kernel32.dll", EntryPoint = "RtlZeroMemory")]
-    static extern void ZeroMemory(IntPtr dest, IntPtr size);
+    [DllImport("advapi32.dll", CharSet = CharSet.Unicode)] static extern int StartTraceW(out long sessionHandle, string sessionName, IntPtr properties);
+    [DllImport("advapi32.dll")] static extern int EnableTraceEx2(long sessionHandle, ref Guid providerId, int controlCode, byte level, ulong matchAnyKeyword, ulong matchAllKeyword, int timeout, IntPtr enableParameters);
+    [DllImport("advapi32.dll", CharSet = CharSet.Unicode, SetLastError = true)] static extern long OpenTraceW(IntPtr logfile);
+    [DllImport("advapi32.dll")] static extern int ProcessTrace([In] long[] handleArray, int handleCount, IntPtr startTime, IntPtr endTime);
+    [DllImport("advapi32.dll", CharSet = CharSet.Unicode)] static extern int ControlTraceW(long sessionHandle, string sessionName, IntPtr properties, int controlCode);
+    [DllImport("advapi32.dll")] static extern int CloseTrace(long traceHandle);
 
-    static string Ip(uint v) {
-        return (v & 0xFF) + "." + ((v >> 8) & 0xFF) + "." +
-               ((v >> 16) & 0xFF) + "." + ((v >> 24) & 0xFF);
+    // ---- endpoint aggregation ------------------------------------------------------------------
+    sealed class Endpoint {
+        public string Ip; public int Port; public bool V6;
+        public long FirstSeen, LastSeen, Packets, Bytes;
+        public long[] Buckets = new long[64];   // packets per 1s bucket (rolling)
+        public long BucketBase;
     }
 
-    static int Port(ushort v) {
-        return ((v & 0xFF) << 8) | ((v >> 8) & 0xFF);
-    }
+    static readonly object Gate = new object();
+    static readonly Dictionary<string, Endpoint> Endpoints = new Dictionary<string, Endpoint>();
+    static readonly HashSet<int> LocalPorts = new HashSet<int>();
+    static volatile int _pid;
+    static long _events, _matched;
 
-    static bool IsPublic(uint ip) {
-        byte a = (byte)(ip & 0xFF);
-        byte b = (byte)((ip >> 8) & 0xFF);
-        if (a == 0 || a == 10 || a == 127) return false;
-        if (a == 169 && b == 254) return false;
-        if (a == 172 && b >= 16 && b <= 31) return false;
-        if (a == 192 && b == 168) return false;
-        if (a >= 224) return false;
+    static long _sessionHandle;
+    static long _traceHandle = INVALID_PROCESSTRACE_HANDLE;
+    static Thread _consumer;
+    static EventRecordCallback _callback;   // keep the delegate alive while ETW holds the pointer
+    static IntPtr _loggerName = IntPtr.Zero;
+    static volatile bool _stopRequested;
+
+    public static bool StopRequested { get { return _stopRequested; } }
+    public static bool Running { get { return _traceHandle != INVALID_PROCESSTRACE_HANDLE; } }
+    public static long EventCount { get { return Interlocked.Read(ref _events); } }
+    public static long MatchedCount { get { return Interlocked.Read(ref _matched); } }
+
+    static long NowMs() { return DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(); }
+    static int Port(ushort networkOrder) { return ((networkOrder & 0xFF) << 8) | (networkOrder >> 8); }
+
+    static bool IsPublicV4(byte[] b) {
+        if (b[0] == 0 || b[0] == 10 || b[0] == 127) return false;
+        if (b[0] == 100 && b[1] >= 64 && b[1] <= 127) return false;    // CGNAT
+        if (b[0] == 169 && b[1] == 254) return false;
+        if (b[0] == 172 && b[1] >= 16 && b[1] <= 31) return false;
+        if (b[0] == 192 && b[1] == 168) return false;
+        if (b[0] >= 224) return false;                                  // multicast / reserved
         return true;
     }
 
-    static bool IsGamePort(int port) {
-        if (port == 53 || port == 80 || port == 443) return false;
-        if (port == 3478 || port == 3479) return false;
-        if (port == 123) return false;
+    static bool IsPublicV6(byte[] b) {
+        if ((b[0] & 0xE0) != 0x20) return false;                        // only 2000::/3 is global unicast
         return true;
     }
 
-    static IntPtr AllocPropertiesBuffer(string loggerName) {
+    static bool IsIgnoredPort(int port) {
+        return port == 53 || port == 123 || port == 443 || port == 80 || port == 3478 || port == 3479 || port == 5353 || port == 1900;
+    }
+
+    static void OnEvent(IntPtr recordPtr) {
+        try {
+            Interlocked.Increment(ref _events);
+            var rec = (EVENT_RECORD)Marshal.PtrToStructure(recordPtr, typeof(EVENT_RECORD));
+            ushort id = rec.EventHeader.EventDescriptor.Id;
+            bool v4 = id == UDP4_SEND || id == UDP4_RECV;
+            bool v6 = id == UDP6_SEND || id == UDP6_RECV;
+            if (!v4 && !v6) return;
+            int addrLen = v4 ? 4 : 16;
+            int minLen = 8 + addrLen * 2 + 4;
+            if (rec.UserData == IntPtr.Zero || rec.UserDataLength < minLen) return;
+
+            int pid = Marshal.ReadInt32(rec.UserData, 0);
+            int filter = _pid;
+            if (filter == 0 || pid != filter) return;
+
+            int size = Marshal.ReadInt32(rec.UserData, 4);
+            byte[] daddr = new byte[addrLen], saddr = new byte[addrLen];
+            Marshal.Copy(IntPtr.Add(rec.UserData, 8), daddr, 0, addrLen);
+            Marshal.Copy(IntPtr.Add(rec.UserData, 8 + addrLen), saddr, 0, addrLen);
+            int dport = Port((ushort)Marshal.ReadInt16(rec.UserData, 8 + addrLen * 2));
+            int sport = Port((ushort)Marshal.ReadInt16(rec.UserData, 8 + addrLen * 2 + 2));
+
+            // "transmitted from saddr:sport to daddr:dport" / "received from saddr:sport to daddr:dport"
+            bool recv = id == UDP4_RECV || id == UDP6_RECV;
+            byte[] remote = recv ? saddr : daddr;
+            int remotePort = recv ? sport : dport;
+            int localPort = recv ? dport : sport;
+
+            if (v4 ? !IsPublicV4(remote) : !IsPublicV6(remote)) return;
+            if (IsIgnoredPort(remotePort)) return;
+
+            string ip = new IPAddress(remote).ToString();
+            string key = (v6 ? "[" + ip + "]" : ip) + ":" + remotePort;
+            long now = NowMs();
+            long sec = now / 1000;
+            lock (Gate) {
+                Endpoint e;
+                if (!Endpoints.TryGetValue(key, out e)) {
+                    e = new Endpoint { Ip = ip, Port = remotePort, V6 = v6, FirstSeen = now, BucketBase = sec };
+                    Endpoints[key] = e;
+                }
+                Advance(e, sec);
+                e.Buckets[sec % e.Buckets.Length]++;
+                e.LastSeen = now;
+                e.Packets++;
+                e.Bytes += size;
+                if (localPort > 0 && LocalPorts.Count < 64) LocalPorts.Add(localPort);
+            }
+            Interlocked.Increment(ref _matched);
+        } catch {
+            // never let an exception escape into the ETW callback
+        }
+    }
+
+    static void Advance(Endpoint e, long sec) {
+        if (sec <= e.BucketBase) return;
+        long gap = Math.Min(sec - e.BucketBase, e.Buckets.Length);
+        for (long i = 1; i <= gap; i++) e.Buckets[(e.BucketBase + i) % e.Buckets.Length] = 0;
+        e.BucketBase = sec;
+    }
+
+    static long PacketsInWindow(Endpoint e, long sec, int windowSecs) {
+        Advance(e, sec);
+        long total = 0;
+        for (int i = 0; i < windowSecs && i < e.Buckets.Length; i++) total += e.Buckets[(sec - i + e.Buckets.Length * 4) % e.Buckets.Length];
+        return total;
+    }
+
+    public static void SetPid(int pid) {
+        if (pid == _pid) return;
+        _pid = pid;
+        Reset();
+    }
+
+    public static void Reset() {
+        lock (Gate) { Endpoints.Clear(); LocalPorts.Clear(); }
+    }
+
+    // Serializes the current state. Scoring: 70% share of packets in the window, 30% recency.
+    public static string Snapshot(int windowSecs, bool exitlag) {
+        long now = NowMs();
+        long sec = now / 1000;
+        long windowMs = windowSecs * 1000L;
+        var rows = new List<KeyValuePair<Endpoint, long>>();
+        int[] ports;
+        lock (Gate) {
+            foreach (var key in Endpoints.Keys.ToList()) {
+                var e = Endpoints[key];
+                if (now - e.LastSeen > windowMs) { Endpoints.Remove(key); continue; }
+                rows.Add(new KeyValuePair<Endpoint, long>(e, PacketsInWindow(e, sec, windowSecs)));
+            }
+            ports = LocalPorts.OrderBy(p => p).ToArray();
+            LocalPorts.Clear();
+        }
+
+        long max = 1;
+        foreach (var r in rows) if (r.Value > max) max = r.Value;
+        var scored = rows.Select(r => {
+            double freq = (double)r.Value / max;
+            double recency = Math.Max(0.0, 1.0 - (double)(now - r.Key.LastSeen) / windowMs);
+            return new { E = r.Key, Count = r.Value, Score = Math.Round(Math.Min(1.0, freq * 0.7 + recency * 0.3), 4) };
+        }).OrderByDescending(x => x.Score).ThenByDescending(x => x.Count).Take(20).ToList();
+
+        var inv = CultureInfo.InvariantCulture;
+        var sb = new StringBuilder(512);
+        sb.Append("{\"dbdRunning\":true,\"dbdPid\":").Append(_pid);
+        if (scored.Count > 0) {
+            var top = scored[0];
+            double confidence = scored.Count == 1 ? top.Score : Math.Min(1.0, top.Score + (top.Score - scored[1].Score) * 0.5);
+            sb.Append(",\"current_server\":\"").Append(top.E.V6 ? "[" + top.E.Ip + "]" : top.E.Ip).Append(':').Append(top.E.Port).Append('"');
+            sb.Append(",\"currentIp\":\"").Append(top.E.Ip).Append('"');
+            sb.Append(",\"confidence\":").Append(Math.Round(confidence, 4).ToString(inv));
+        } else {
+            sb.Append(",\"current_server\":null,\"currentIp\":null,\"confidence\":0");
+        }
+        sb.Append(",\"candidates\":[");
+        for (int i = 0; i < scored.Count; i++) {
+            var s = scored[i];
+            if (i > 0) sb.Append(',');
+            sb.Append("{\"ip\":\"").Append(s.E.Ip).Append("\",\"port\":").Append(s.E.Port)
+              .Append(",\"score\":").Append(s.Score.ToString(inv))
+              .Append(",\"lastSeen\":").Append(s.E.LastSeen)
+              .Append(",\"count\":").Append(s.Count)
+              .Append(",\"bytes\":").Append(s.E.Bytes)
+              .Append(",\"v6\":").Append(s.E.V6 ? "true" : "false").Append('}');
+        }
+        sb.Append("],\"udpPorts\":[").Append(string.Join(",", ports)).Append(']');
+        sb.Append(",\"exitlagRunning\":").Append(exitlag ? "true" : "false");
+        sb.Append(",\"t\":").Append(now).Append('}');
+        return sb.ToString();
+    }
+
+    // ---- session management --------------------------------------------------------------------
+    static IntPtr AllocProperties() {
         int propsSize = Marshal.SizeOf(typeof(EVENT_TRACE_PROPERTIES));
-        byte[] nameBytes = Encoding.Unicode.GetBytes(loggerName + "\0");
-        int total = propsSize + nameBytes.Length;
+        byte[] name = Encoding.Unicode.GetBytes(SessionName + "\0");
+        int total = propsSize + name.Length;
         IntPtr buffer = Marshal.AllocHGlobal(total);
-        ZeroMemory(buffer, (IntPtr)total);
-
+        for (int i = 0; i < total; i++) Marshal.WriteByte(buffer, i, 0);
         var props = new EVENT_TRACE_PROPERTIES();
         props.Wnode.BufferSize = (uint)total;
         props.Wnode.Flags = WNODE_FLAG_TRACED_GUID;
-        props.BufferSize = 64;
+        props.Wnode.ClientContext = 1;          // QPC timestamps
+        props.BufferSize = 64;                  // KB
         props.MinimumBuffers = 4;
-        props.MaximumBuffers = 16;
+        props.MaximumBuffers = 32;
         props.LogFileMode = EVENT_TRACE_REAL_TIME_MODE;
         props.FlushTimer = 1;
         props.LoggerNameOffset = (uint)propsSize;
-
         Marshal.StructureToPtr(props, buffer, false);
-        Marshal.Copy(nameBytes, 0, IntPtr.Add(buffer, propsSize), nameBytes.Length);
+        Marshal.Copy(name, 0, IntPtr.Add(buffer, propsSize), name.Length);
         return buffer;
     }
 
-    static void StopExisting() {
-        IntPtr props = AllocPropertiesBuffer(SESSION);
-        try {
-            ControlTraceW(0, SESSION, props, EVENT_TRACE_CONTROL_STOP);
-        } finally {
-            Marshal.FreeHGlobal(props);
-        }
+    // Stops the named session whoever created it (previous crashed run included). Returns true if one was running.
+    public static bool StopSession() {
+        IntPtr props = AllocProperties();
+        try { return ControlTraceW(0, SessionName, props, EVENT_TRACE_CONTROL_STOP) == 0; }
+        finally { Marshal.FreeHGlobal(props); }
     }
-
-    static void OnEvent(IntPtr eventRecordPtr) {
-        Interlocked.Increment(ref _callbackCount);
-        try {
-            var record = (EVENT_RECORD)Marshal.PtrToStructure(eventRecordPtr, typeof(EVENT_RECORD));
-            if (record.UserData == IntPtr.Zero || record.UserDataLength < Marshal.SizeOf(typeof(UdpIpV4Payload))) return;
-
-            var payload = (UdpIpV4Payload)Marshal.PtrToStructure(record.UserData, typeof(UdpIpV4Payload));
-            int pid = unchecked((int)payload.Pid);
-            if (_filterPid != 0 && pid != _filterPid) return;
-
-            byte opcode = record.EventHeader.EventDescriptor.Opcode;
-            bool isRecv = (opcode == 2 || opcode == 11);
-            uint remoteRaw = isRecv ? payload.SourceAddress : payload.DestinationAddress;
-            int remotePort = isRecv ? Port(payload.SourcePort) : Port(payload.DestinationPort);
-            int localPort = isRecv ? Port(payload.DestinationPort) : Port(payload.SourcePort);
-
-            if (!IsPublic(remoteRaw)) return;
-            if (!IsGamePort(remotePort)) return;
-
-            _queue.Enqueue(new NetEvent {
-                RemoteIp = Ip(remoteRaw),
-                RemotePort = remotePort,
-                LocalPort = localPort,
-                Pid = pid,
-                Ts = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()
-            });
-        } catch { }
-    }
-
-    public static int GetCallbackCount() { return _callbackCount; }
 
     public static string Start(int pid) {
-        if (IntPtr.Size != 8) return "64-bit process required";
-        _filterPid = pid;
-        NetEvent d; while (_queue.TryDequeue(out d)) { }
+        if (Running) { SetPid(pid); return "ok"; }
+        _pid = pid;
+        Reset();
+        StopSession();
 
-        StopExisting();
-        Thread.Sleep(200);
+        IntPtr props = AllocProperties();
+        long session;
+        int err;
+        try { err = StartTraceW(out session, SessionName, props); }
+        finally { Marshal.FreeHGlobal(props); }
+        if (err != 0) return "StartTrace failed (" + err + ")";
+        _sessionHandle = session;
 
-        IntPtr props = AllocPropertiesBuffer(SESSION);
-        long sh;
-        int err = StartTraceW(out sh, SESSION, props);
-        Marshal.FreeHGlobal(props);
-        if (err != 0) return "StartTrace error " + err + " (0x" + err.ToString("X") + ")";
-        _sessionHandle = sh;
-
-        Guid g = KERNEL_NETWORK;
-        err = EnableTraceEx2(sh, ref g, EVENT_CONTROL_CODE_ENABLE, TRACE_LEVEL_VERBOSE, KEYWORD_UDPIP, 0, 0, IntPtr.Zero);
-        if (err != 0) {
-            StopExisting();
-            return "EnableTraceEx2 error " + err;
-        }
+        Guid provider = KERNEL_NETWORK;
+        err = EnableTraceEx2(session, ref provider, EVENT_CONTROL_CODE_ENABLE_PROVIDER, TRACE_LEVEL_INFORMATION, KEYWORD_IPV4 | KEYWORD_IPV6, 0, 0, IntPtr.Zero);
+        if (err != 0) { StopSession(); return "EnableTraceEx2 failed (" + err + ")"; }
 
         var logfile = new EVENT_TRACE_LOGFILEW();
         logfile.LogfileHeader.LogInstanceOrData = new byte[16];
         logfile.LogfileHeader.TimeZoneInformation = new byte[172];
-        _loggerNamePtr = Marshal.StringToHGlobalUni(SESSION);
-        logfile.LoggerName = _loggerNamePtr;
-        logfile.ProcessTraceMode = unchecked((uint)(PROCESS_TRACE_MODE_REAL_TIME | PROCESS_TRACE_MODE_EVENT_RECORD));
+        _loggerName = Marshal.StringToHGlobalUni(SessionName);
+        logfile.LoggerName = _loggerName;
+        logfile.ProcessTraceMode = PROCESS_TRACE_MODE_REAL_TIME | PROCESS_TRACE_MODE_EVENT_RECORD;
+        _callback = new EventRecordCallback(OnEvent);
+        logfile.EventRecordCallback = Marshal.GetFunctionPointerForDelegate(_callback);
 
-        EventRecordCallbackDelegate cb = new EventRecordCallbackDelegate(OnEvent);
-        _callbackKeepAlive = cb;
-        logfile.EventRecordCallback = Marshal.GetFunctionPointerForDelegate(cb);
-
-        int logfileSize = Marshal.SizeOf(typeof(EVENT_TRACE_LOGFILEW));
-        IntPtr logfilePtr = Marshal.AllocHGlobal(logfileSize);
-        ZeroMemory(logfilePtr, (IntPtr)logfileSize);
-        Marshal.StructureToPtr(logfile, logfilePtr, false);
-
-        long th = OpenTraceW(logfilePtr);
-        Marshal.FreeHGlobal(logfilePtr);
-        if (th == -1 || th == 0) {
-            StopExisting();
-            if (_loggerNamePtr != IntPtr.Zero) { Marshal.FreeHGlobal(_loggerNamePtr); _loggerNamePtr = IntPtr.Zero; }
-            return "OpenTrace error " + Marshal.GetLastWin32Error();
+        int size = Marshal.SizeOf(typeof(EVENT_TRACE_LOGFILEW));
+        IntPtr logfilePtr = Marshal.AllocHGlobal(size);
+        long handle;
+        try {
+            Marshal.StructureToPtr(logfile, logfilePtr, false);
+            handle = OpenTraceW(logfilePtr);
+        } finally {
+            Marshal.FreeHGlobal(logfilePtr);
+        }
+        if (handle == INVALID_PROCESSTRACE_HANDLE) {
+            int last = Marshal.GetLastWin32Error();
+            StopSession();
+            FreeLoggerName();
+            return "OpenTrace failed (" + last + ")";
         }
 
-        _traceHandle = th;
-        _thread = new Thread(() => {
-            ProcessTrace(new long[] { _traceHandle }, 1, IntPtr.Zero, IntPtr.Zero);
-        });
-        _thread.IsBackground = true;
-        _thread.Name = "ETW-ProcessTrace";
-        _thread.Start();
+        _traceHandle = handle;
+        _consumer = new Thread(() => { ProcessTrace(new long[] { handle }, 1, IntPtr.Zero, IntPtr.Zero); });
+        _consumer.IsBackground = true;
+        _consumer.Name = "DBD-ETW-Consumer";
+        _consumer.Start();
         return "ok";
     }
 
-    public static NetEvent[] Drain() {
-        var list = new List<NetEvent>();
-        NetEvent ev; while (_queue.TryDequeue(out ev)) list.Add(ev);
-        return list.ToArray();
-    }
-
-    public static void SetPid(int pid) { _filterPid = pid; }
-    public static int QueueSize() { return _queue.Count; }
+    static readonly object StopGate = new object();
 
     public static void Stop() {
-        if (_traceHandle != -1 && _traceHandle != 0) {
-            CloseTrace(_traceHandle);
-            _traceHandle = -1;
-        }
-        if (_thread != null && _thread.IsAlive) _thread.Join(3000);
-        StopExisting();
-        if (_loggerNamePtr != IntPtr.Zero) {
-            Marshal.FreeHGlobal(_loggerNamePtr);
-            _loggerNamePtr = IntPtr.Zero;
+        lock (StopGate) {
+            // Stopping the session first makes ProcessTrace return; then release the consumer handle.
+            StopSession();
+            if (_traceHandle != INVALID_PROCESSTRACE_HANDLE) {
+                CloseTrace(_traceHandle);
+                _traceHandle = INVALID_PROCESSTRACE_HANDLE;
+            }
+            if (_consumer != null && _consumer.IsAlive) _consumer.Join(3000);
+            _consumer = null;
+            FreeLoggerName();
+            Reset();
         }
     }
+
+    static void FreeLoggerName() {
+        if (_loggerName != IntPtr.Zero) { Marshal.FreeHGlobal(_loggerName); _loggerName = IntPtr.Zero; }
+    }
+
+    // Watches stdin: "stop" or EOF requests a clean shutdown.
+    public static void WatchStdin() {
+        var t = new Thread(() => {
+            try {
+                string line;
+                while ((line = Console.In.ReadLine()) != null) {
+                    if (line.Trim().Equals("stop", StringComparison.OrdinalIgnoreCase)) break;
+                }
+            } catch { }
+            _stopRequested = true;
+        });
+        t.IsBackground = true;
+        t.Name = "DBD-ETW-Stdin";
+        t.Start();
+        AppDomain.CurrentDomain.ProcessExit += (s, e) => { try { Stop(); } catch { } };
+    }
+}
+
 }
 '@
-
-try {
-    Add-Type -TypeDefinition $csharpCode -Language CSharp -ErrorAction Stop
-    [Console]::Error.WriteLine('[ETW-Tracker] C# compiled OK')
-} catch {
-    [Console]::Error.WriteLine("[ETW-Tracker] C# compile error: $_")
-    exit 1
-}
-
-# --- Helpers ---
-function Log([string]$msg) { [Console]::Error.WriteLine("[ETW-Tracker] $msg") }
-
-function Get-DbdProcess {
-    $candidateNames = @(
-        $DbdProcessName,
-        'DeadByDaylight-Win64-Shipping',
-        'DeadByDaylight-WinGDK-Shipping'
-    ) | Where-Object { $_ } | Select-Object -Unique
-
-    foreach ($name in $candidateNames) {
-        $p = Get-Process -Name $name -ErrorAction SilentlyContinue | Select-Object -First 1
-        if ($p) { return $p }
+    } catch {
+        Log "C# compile error: $_"
+        exit 1
     }
-
-    return $null
 }
 
 function Get-DbdPid {
-    $p = Get-DbdProcess
-    if ($p) { return $p.Id } else { return 0 }
+    foreach ($name in $ProcessNames) {
+        $p = Get-Process -Name $name -ErrorAction SilentlyContinue | Select-Object -First 1
+        if ($p) { return [int]$p.Id }
+    }
+    return 0
 }
 
 function Test-ExitLag {
-    $p = Get-Process -Name 'ExitLag' -ErrorAction SilentlyContinue
-    return ($null -ne $p)
+    return $null -ne (Get-Process -Name 'ExitLag' -ErrorAction SilentlyContinue | Select-Object -First 1)
 }
 
-function Emit([object]$obj) {
-    $obj | ConvertTo-Json -Compress -Depth 4 | ForEach-Object {
-        [Console]::Out.WriteLine($_)
-        [Console]::Out.Flush()
-    }
+function Emit([string]$line) {
+    [Console]::Out.WriteLine($line)
+    [Console]::Out.Flush()
 }
 
-# --- Rolling window for UDP game server ---
-$udpWindow = [System.Collections.Generic.Dictionary[string,hashtable]]::new()
-$windowMs  = $WindowSecs * 1000
-$localUdpPorts = [System.Collections.Generic.HashSet[int]]::new()
-$localUdpPortsLastClean = 0
+[DbdEtw.Tracker]::WatchStdin()
 
-function Score-Window([System.Collections.Generic.Dictionary[string,hashtable]]$win, [long]$now, [long]$winMs) {
-    $expired = @($win.Keys | Where-Object { ($now - $win[$_].lastSeen) -gt $winMs })
-    foreach ($k in $expired) { $win.Remove($k) | Out-Null }
-
-    if ($win.Count -eq 0) { return @{ server=$null; confidence=0.0; candidates=@() } }
-
-    $maxCount = ($win.Values | Measure-Object -Property count -Maximum).Maximum
-    if (-not $maxCount -or $maxCount -le 0) { $maxCount = 1 }
-
-    $candidates = foreach ($key in $win.Keys) {
-        $e       = $win[$key]
-        $freq    = [Math]::Min(1.0, $e.count / $maxCount)
-        $age     = $now - $e.lastSeen
-        $recency = [Math]::Max(0.0, 1.0 - ($age / $winMs))
-        $score   = [Math]::Round(($freq * 0.7) + ($recency * 0.3), 4)
-        $score   = [Math]::Min(1.0, [Math]::Max(0.0, $score))
-        [PSCustomObject]@{
-            ip=$e.ip; port=$e.port; score=$score; lastSeen=$e.lastSeen; count=$e.count
-        }
-    }
-
-    $sorted = @($candidates | Sort-Object score -Descending)
-    $top    = $sorted[0]
-    $server = "$($top.ip):$($top.port)"
-    $confidence = if ($sorted.Count -eq 1) {
-        [Math]::Min(1.0, $top.score)
-    } else {
-        $margin = $top.score - $sorted[1].score
-        [Math]::Min(1.0, [Math]::Round($top.score + ($margin * 0.5), 4))
-    }
-    return @{ server=$server; confidence=[Math]::Min(1.0, $confidence); candidates=$sorted }
+# Guardian: Node/Electron put their children in a KILL_ON_JOB_CLOSE job, so if the app crashes this process
+# is terminated without running any cleanup and the kernel ETW session would outlive it. Grandchildren
+# silently break away from that job: this tiny watcher waits for the tracker to end (for any reason) and
+# stops the session. It lives exactly as long as the tracker.
+try {
+    $logman = Join-Path $env:SystemRoot 'System32\logman.exe'
+    $guard = "Wait-Process -Id $PID -ErrorAction SilentlyContinue; & '$logman' stop $([DbdEtw.Tracker]::SessionName) -ets *> `$null"
+    $psi = New-Object System.Diagnostics.ProcessStartInfo
+    $psi.FileName = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+    $psi.Arguments = '-NoLogo -NoProfile -NonInteractive -EncodedCommand ' + [Convert]::ToBase64String([System.Text.Encoding]::Unicode.GetBytes($guard))
+    $psi.UseShellExecute = $false
+    $psi.CreateNoWindow = $true
+    $psi.RedirectStandardInput = $true
+    $psi.RedirectStandardOutput = $true
+    $psi.RedirectStandardError = $true
+    [void][System.Diagnostics.Process]::Start($psi)
+} catch {
+    Log "Guardian not started: $($_.Exception.Message)"
 }
+Log ("Started (poll={0}ms, window={1}s, processes={2})" -f $PollMs, $WindowSecs, ($ProcessNames -join ','))
 
-# --- Main loop ---
-$lastDbdPid = 0
-$etwStarted = $false
-$tickN      = 0
-$lastServer = $null
-
-# Cache PID+ExitLag check (every 3s instead of every tick)
-$pidCheckInterval = 3000
-$lastPidCheck     = 0
-$cachedDbdPid     = 0
-$cachedExitLag    = $false
-
-Log ('Started (poll={0}ms, window={1}s, process={2})' -f $PollMs, $WindowSecs, $DbdProcessName)
+$lastPid = 0
+$lastPidCheck = 0
+$cachedPid = 0
+$exitlag = $false
+$tick = 0
 
 try {
-    while ($true) {
+    while (-not [DbdEtw.Tracker]::StopRequested) {
         $now = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
-        $tickN++
+        $tick++
 
-        # Throttled PID + ExitLag check
-        if (($now - $lastPidCheck) -gt $pidCheckInterval) {
-            $cachedDbdPid  = Get-DbdPid
-            $cachedExitLag = Test-ExitLag
-            $lastPidCheck  = $now
+        if (($now - $lastPidCheck) -ge 2000) {
+            $cachedPid = Get-DbdPid
+            $exitlag = Test-ExitLag
+            $lastPidCheck = $now
         }
-        $dbdPid = $cachedDbdPid
 
-        if ($dbdPid -ne $lastDbdPid) {
-            if ($dbdPid -eq 0) {
-                Log "DBD stopped - clearing state"
-                $udpWindow.Clear()
-                $localUdpPorts.Clear()
-                $lastServer = $null
+        if ($cachedPid -ne $lastPid) {
+            if ($cachedPid -eq 0) {
+                Log 'Dead by Daylight closed - stopping ETW session'
+                [DbdEtw.Tracker]::Stop()
             } else {
-                $dbdProcess = Get-DbdProcess
-                $dbdLabel = if ($dbdProcess) { "$($dbdProcess.ProcessName) (PID: $dbdPid)" } else { "PID: $dbdPid" }
-                Log "DBD detected ($dbdLabel)"
-                [EtwNet]::SetPid($dbdPid)
-                if (-not $etwStarted) {
-                    $result = [EtwNet]::Start($dbdPid)
-                    if ($result -eq 'ok') {
-                        Log "ETW session started"
-                        $etwStarted = $true
-                    } else {
-                        Log "ETW FAILED: $result"
-                    }
-                }
+                Log "Dead by Daylight detected (PID $cachedPid)"
+                $res = [DbdEtw.Tracker]::Start($cachedPid)
+                if ($res -eq 'ok') { Log 'ETW session running' } else { Log "ETW start failed: $res" }
             }
-            $lastDbdPid = $dbdPid
+            $lastPid = $cachedPid
         }
 
-        if ($dbdPid -eq 0) {
-            Emit ([PSCustomObject]@{
-                dbdRunning=$false; current_server=$null; confidence=0.0
-                candidates=@(); udpPorts=@(); dbdPid=0
-                exitlagRunning=$cachedExitLag; t=$now
-            })
-            Start-Sleep -Milliseconds $PollMs
-            continue
-        }
-
-        # Drain ETW UDP events
-        $events   = [EtwNet]::Drain()
-        $udpCount = 0
-
-        foreach ($ev in $events) {
-            $udpCount++
-            $key = "$($ev.RemoteIp):$($ev.RemotePort)"
-            if (-not $udpWindow.ContainsKey($key)) {
-                $udpWindow[$key] = @{
-                    ip=$ev.RemoteIp; port=$ev.RemotePort
-                    firstSeen=$now; lastSeen=$now; count=0
-                }
+        if ($cachedPid -eq 0) {
+            Emit ('{{"dbdRunning":false,"dbdPid":0,"current_server":null,"currentIp":null,"confidence":0,"candidates":[],"udpPorts":[],"exitlagRunning":{0},"t":{1}}}' -f $exitlag.ToString().ToLowerInvariant(), $now)
+        } else {
+            Emit ([DbdEtw.Tracker]::Snapshot($WindowSecs, $exitlag))
+            if ($tick % 40 -eq 0) {
+                Log ("events={0} matched={1}" -f [DbdEtw.Tracker]::EventCount, [DbdEtw.Tracker]::MatchedCount)
             }
-            $udpWindow[$key].lastSeen = $now
-            $udpWindow[$key].count++
-
-            if ($ev.LocalPort -gt 0) { $localUdpPorts.Add($ev.LocalPort) | Out-Null }
         }
-
-        # Periodic log
-        if ($tickN % 20 -eq 0) {
-            $logMsg = 'tick={0} events={1} endpoints={2} q={3} exitlag={4}' -f $tickN, $udpCount, $udpWindow.Count, [EtwNet]::QueueSize(), $cachedExitLag
-            Log $logMsg
-        }
-
-        # Clean stale local ports
-        if (($now - $localUdpPortsLastClean) -gt 10000) {
-            $localUdpPorts.Clear()
-            $localUdpPortsLastClean = $now
-        }
-
-        # Score
-        $result = Score-Window $udpWindow $now $windowMs
-
-        # Log server change
-        if ($result.server -and $result.server -ne $lastServer) {
-            $conf = [Math]::Round($result.confidence, 2)
-            Log ('Game server: {0} (confidence={1})' -f $result.server, $conf)
-            $lastServer = $result.server
-        }
-
-        Emit ([PSCustomObject]@{
-            dbdRunning     = $true
-            current_server = $result.server
-            confidence     = $result.confidence
-            candidates     = $result.candidates
-            udpPorts       = @($localUdpPorts | Sort-Object)
-            dbdPid         = $dbdPid
-            exitlagRunning = $cachedExitLag
-            t              = $now
-        })
 
         Start-Sleep -Milliseconds $PollMs
     }
-}
-finally {
-    Log "Shutting down..."
-    [EtwNet]::Stop()
-    Log "Stopped"
+    Log 'Stop requested'
+} finally {
+    [DbdEtw.Tracker]::Stop()
+    Log 'Stopped'
 }

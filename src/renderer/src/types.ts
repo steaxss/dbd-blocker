@@ -68,7 +68,10 @@ export interface TrackerCandidate {
 export interface TrackerResult {
   dbdRunning: boolean
   current_server: string | null
+  currentIp: string | null
   currentRegion: string | null
+  /** The game is connected to a server inside a region that is currently blocked. */
+  blockedRegionHit: boolean
   confidence: number
   candidates: TrackerCandidate[]
   udpPorts: number[]
@@ -77,6 +80,13 @@ export interface TrackerResult {
 }
 
 export type ActiveConnectionsResult = TrackerResult
+
+export interface RefreshIpsResult {
+  added: number
+  removed: number
+  /** Blocked regions whose filters were rebuilt because AWS ranges changed. */
+  resynced: string[]
+}
 
 export interface UpdateInfo {
   available: boolean
@@ -121,7 +131,7 @@ export interface ElectronAPI {
   unblockAll:    () => Promise<ActionResult>
   getStatus:     () => Promise<Record<string, boolean>>
   getCidrCounts: () => Promise<Record<string, number>>
-  refreshIps:    () => Promise<{ added: number; removed: number }>
+  refreshIps:    () => Promise<RefreshIpsResult>
   isAdmin:       () => Promise<boolean>
   checkExePath:  () => Promise<ExeValidationResult>
   getExePath:  () => Promise<string>

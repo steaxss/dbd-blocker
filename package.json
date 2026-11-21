@@ -1,18 +1,19 @@
 {
   "name": "dbd-blocker",
-  "version": "1.3.0",
+  "version": "1.4.0",
   "description": "DBD Server Blocker - block AWS regions for Dead by Daylight",
   "author": "steaxs",
   "main": "out/main/index.js",
   "scripts": {
     "dev": "electron-vite dev",
     "build": "electron-vite build",
-    "typecheck": "tsc --noEmit -p tsconfig.web.json && tsc --noEmit -p tsconfig.node.json --moduleResolution node --module commonjs",
+    "typecheck": "tsc --noEmit -p tsconfig.web.json && tsc --noEmit -p tsconfig.node.json",
     "lint": "npm run typecheck",
-    "test": "npm run typecheck && npm run build",
+    "test": "npm run typecheck && npm run test:unit && npm run build",
     "preview": "electron-vite preview",
     "dist": "cross-env OBFUSCATE=1 electron-vite build && electron-builder --win",
-    "dist:publish": "cross-env OBFUSCATE=1 electron-vite build && electron-builder --win --publish always"
+    "dist:publish": "cross-env OBFUSCATE=1 electron-vite build && electron-builder --win --publish always",
+    "test:unit": "vitest run"
   },
   "dependencies": {
     "country-flag-icons": "^1.6.15",
@@ -25,7 +26,7 @@
   },
   "devDependencies": {
     "@types/leaflet": "^1.9.21",
-    "@types/node": "^20.11.20",
+    "@types/node": "^22.20.5",
     "@types/react": "^18.2.55",
     "@types/react-dom": "^18.2.19",
     "@vitejs/plugin-react": "^4.2.1",
@@ -39,6 +40,10 @@
     "rollup-plugin-obfuscator": "^1.1.0",
     "tailwindcss": "^3.4.1",
     "terser": "^5.46.1",
-    "typescript": "^5.3.3"
+    "typescript": "^5.3.3",
+    "vitest": "^5.1.1"
+  },
+  "engines": {
+    "node": ">=22.12"
   }
 }

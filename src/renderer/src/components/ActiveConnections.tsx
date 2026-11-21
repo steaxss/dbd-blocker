@@ -5,7 +5,7 @@ import { REGIONS } from '../regions'
 import type { TrackerResult, TrackerCandidate } from '../types'
 
 const EMPTY: TrackerResult = {
-  dbdRunning: false, current_server: null, currentRegion: null,
+  dbdRunning: false, current_server: null, currentIp: null, currentRegion: null, blockedRegionHit: false,
   confidence: 0, candidates: [], udpPorts: [], dbdPid: 0, exitlagRunning: false,
 }
 
@@ -152,6 +152,19 @@ export function ActiveConnections() {
             <AlertTriangle className="w-4 h-4 shrink-0" style={{ color: '#FF9800' }} />
             <div className="text-[11px] text-white/50 leading-relaxed">
               <span className="font-bold" style={{ color: '#FF9800' }}>ExitLag detected</span> — server shown may be an ExitLag relay, not the actual game server. Check ExitLag for accurate server info.
+            </div>
+          </div>
+        )}
+
+        {enabled && result.dbdRunning && result.blockedRegionHit && (
+          <div
+            className="flex items-center gap-3 p-3 rounded-xl"
+            style={{ background: 'rgba(255,64,64,0.07)', border: '1px solid rgba(255,64,64,0.25)' }}
+          >
+            <AlertTriangle className="w-4 h-4 shrink-0" style={{ color: '#FF4040' }} />
+            <div className="text-[11px] text-white/55 leading-relaxed">
+              <span className="font-bold" style={{ color: '#FF4040' }}>Connected to a blocked region</span> ({result.currentRegion}).
+              Blocks only apply to new connections: restart Dead by Daylight. If it keeps happening, run Refresh IPs so the newest AWS ranges are blocked too.
             </div>
           </div>
         )}
