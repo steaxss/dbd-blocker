@@ -26,5 +26,6 @@
 - IPC handlers validate their input and only answer the main window.
 - The app runs as a single instance.
 - Settings and cache are written atomically.
+- Removed code obfuscation (the project is open source): production builds are now identical to dev builds, readable in crash reports and less prone to antivirus false positives.
 - Removed the unused `udp-tracker.ps1` and dead code.
 - Added unit tests (vitest).
